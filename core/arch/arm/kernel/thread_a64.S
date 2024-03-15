@@ -1,23 +1,24 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
- * Copyright (c) 2015-2022, Linaro Limited
+ * Copyright (c) 2015-2020, Linaro Limited
  */
 
-#include <arm64_macros.S>
 #include <arm.h>
+#include <arm64_macros.S>
 #include <asm.S>
 #include <generated/asm-defines.h>
 #include <keep.h>
 #include <kernel/cache_helpers.h>
-#include <kernel/thread.h>
-#include <kernel/thread_private.h>
+#include <kernel/thread_defs.h>
 #include <mm/core_mmu.h>
 #include <smccc.h>
+
+#include "thread_private.h"
 
 	.macro get_thread_ctx core_local, res, tmp0, tmp1
 		ldrh	w\tmp0, [\core_local, \
 				#THREAD_CORE_LOCAL_CURR_THREAD]
-		adr_l	x\res, threads
+		ldr	x\res, =threads
 		mov	x\tmp1, #THREAD_CTX_SIZE
 		madd	x\res, x\tmp0, x\tmp1, x\res
 	.endm
@@ -35,34 +36,6 @@
 		b.eq	\label
 	.endm
 
-	.macro pauth_el0_to_el1 reg
-		/*
-		 * If pauth is only enabled in one of core or TA (xor) we
-		 * need to update sctlr.
-		 */
-#if (defined(CFG_TA_PAUTH) && !defined(CFG_CORE_PAUTH)) || \
-    (!defined(CFG_TA_PAUTH) && defined(CFG_CORE_PAUTH))
-		mrs	\reg, sctlr_el1
-		/* Flip the SCTLR_ENIA bit */
-		eor     \reg, \reg, #SCTLR_ENIA
-		msr	sctlr_el1, \reg
-#endif
-	.endm
-
-	.macro pauth_el1_to_el0 reg
-		/*
-		 * If pauth is only enabled in one of core or TA (xor) we
-		 * need to update sctlr.
-		 */
-#if (defined(CFG_TA_PAUTH) && !defined(CFG_CORE_PAUTH)) || \
-    (!defined(CFG_TA_PAUTH) && defined(CFG_CORE_PAUTH))
-		mrs	\reg, sctlr_el1
-		/* Flip the SCTLR_ENIA bit */
-		eor     \reg, \reg, #SCTLR_ENIA
-		msr	sctlr_el1, \reg
-#endif
-	.endm
-
 /* void thread_resume(struct thread_ctx_regs *regs) */
 FUNC thread_resume , :
 	load_xregs x0, THREAD_CTX_REGS_SP, 1, 3
@@ -73,23 +46,13 @@ FUNC thread_resume , :
 	ldr	x1, [x0, THREAD_CTX_REGS_TPIDR_EL0]
 	msr	tpidr_el0, x1
 
-#if defined(CFG_TA_PAUTH) || defined(CFG_CORE_PAUTH)
-	load_xregs x0, THREAD_CTX_REGS_APIAKEY_HI, 1, 2
-	write_apiakeyhi	x1
-	write_apiakeylo	x2
-#endif
 	b_if_spsr_is_el0 w3, 1f
 
-#if defined(CFG_CORE_PAUTH) || defined(CFG_TA_PAUTH)
-	/* SCTLR or the APIA key has changed */
-	isb
-#endif
 	load_xregs x0, THREAD_CTX_REGS_X1, 1, 3
 	ldr	x0, [x0, THREAD_CTX_REGS_X0]
 	return_from_exception
 
-1:
-	load_xregs x0, THREAD_CTX_REGS_X1, 1, 3
+1:	load_xregs x0, THREAD_CTX_REGS_X1, 1, 3
 	ldr	x0, [x0, THREAD_CTX_REGS_X0]
 
 	msr	spsel, #1
@@ -164,13 +127,6 @@ FUNC __thread_enter_user_mode , :
 	msr	elr_el1, x2
 	msr	spsr_el1, x3
 
-#ifdef	CFG_TA_PAUTH
-	/* Load APIAKEY */
-	load_xregs x0, THREAD_CTX_REGS_APIAKEY_HI, 1, 2
-	write_apiakeyhi	x1
-	write_apiakeylo	x2
-#endif
-
 	/*
 	 * Save the values for x0 and x1 in struct thread_core_local to be
 	 * restored later just before the eret.
@@ -232,9 +188,7 @@ END_FUNC thread_unwind_user_mode
 		isb
 
 		/* Jump into the full mapping and continue execution */
-		adr	x0, 1f
-		ldr	x1, [sp, #THREAD_CORE_LOCAL_KCODE_OFFSET]
-		add	x0, x0, x1
+		ldr	x0, =1f
 		br	x0
 	1:
 BTI(		bti	j)
@@ -330,15 +284,18 @@ el1_serror_sp1:
 	.balign	128, INV_INSN
 el0_sync_a64:
 	restore_mapping
-	/* PAuth will be disabled later else check_vector_size will fail */
 
-	b	el0_sync_a64_finish
+	mrs	x2, esr_el1
+	mrs	x3, sp_el0
+	lsr	x2, x2, #ESR_EC_SHIFT
+	cmp	x2, #ESR_EC_AARCH64_SVC
+	b.eq	el0_svc
+	b	el0_sync_abort
 	check_vector_size el0_sync_a64
 
 	.balign	128, INV_INSN
 el0_irq_a64:
 	restore_mapping
-	pauth_el0_to_el1 x1
 
 	b	elx_irq
 	check_vector_size el0_irq_a64
@@ -346,7 +303,6 @@ el0_irq_a64:
 	.balign	128, INV_INSN
 el0_fiq_a64:
 	restore_mapping
-	pauth_el0_to_el1 x1
 
 	b	elx_fiq
 	check_vector_size el0_fiq_a64
@@ -364,7 +320,12 @@ el0_serror_a64:
 el0_sync_a32:
 	restore_mapping
 
-	b 	el0_sync_a32_finish
+	mrs	x2, esr_el1
+	mrs	x3, sp_el0
+	lsr	x2, x2, #ESR_EC_SHIFT
+	cmp	x2, #ESR_EC_AARCH32_SVC
+	b.eq	el0_svc
+	b	el0_sync_abort
 	check_vector_size el0_sync_a32
 
 	.balign	128, INV_INSN
@@ -395,225 +356,109 @@ el0_serror_a32:
 	.endm
 
 	.balign	2048, INV_INSN
-	.global thread_excp_vect_wa_spectre_v2
-thread_excp_vect_wa_spectre_v2:
+	.global thread_excp_vect_workaround
+thread_excp_vect_workaround:
 	/* -----------------------------------------------------
 	 * EL1 with SP0 : 0x0 - 0x180
 	 * -----------------------------------------------------
 	 */
 	.balign	128, INV_INSN
-wa_spectre_v2_el1_sync_sp0:
+workaround_el1_sync_sp0:
 	b	el1_sync_sp0
-	check_vector_size wa_spectre_v2_el1_sync_sp0
+	check_vector_size workaround_el1_sync_sp0
 
 	.balign	128, INV_INSN
-wa_spectre_v2_el1_irq_sp0:
+workaround_el1_irq_sp0:
 	b	el1_irq_sp0
-	check_vector_size wa_spectre_v2_el1_irq_sp0
+	check_vector_size workaround_el1_irq_sp0
 
 	.balign	128, INV_INSN
-wa_spectre_v2_el1_fiq_sp0:
+workaround_el1_fiq_sp0:
 	b	el1_fiq_sp0
-	check_vector_size wa_spectre_v2_el1_fiq_sp0
+	check_vector_size workaround_el1_fiq_sp0
 
 	.balign	128, INV_INSN
-wa_spectre_v2_el1_serror_sp0:
+workaround_el1_serror_sp0:
 	b	el1_serror_sp0
-	check_vector_size wa_spectre_v2_el1_serror_sp0
+	check_vector_size workaround_el1_serror_sp0
 
 	/* -----------------------------------------------------
 	 * Current EL with SP1: 0x200 - 0x380
 	 * -----------------------------------------------------
 	 */
 	.balign	128, INV_INSN
-wa_spectre_v2_el1_sync_sp1:
-	b	wa_spectre_v2_el1_sync_sp1
-	check_vector_size wa_spectre_v2_el1_sync_sp1
+workaround_el1_sync_sp1:
+	b	workaround_el1_sync_sp1
+	check_vector_size workaround_el1_sync_sp1
 
 	.balign	128, INV_INSN
-wa_spectre_v2_el1_irq_sp1:
-	b	wa_spectre_v2_el1_irq_sp1
-	check_vector_size wa_spectre_v2_el1_irq_sp1
+workaround_el1_irq_sp1:
+	b	workaround_el1_irq_sp1
+	check_vector_size workaround_el1_irq_sp1
 
 	.balign	128, INV_INSN
-wa_spectre_v2_el1_fiq_sp1:
-	b	wa_spectre_v2_el1_fiq_sp1
-	check_vector_size wa_spectre_v2_el1_fiq_sp1
+workaround_el1_fiq_sp1:
+	b	workaround_el1_fiq_sp1
+	check_vector_size workaround_el1_fiq_sp1
 
 	.balign	128, INV_INSN
-wa_spectre_v2_el1_serror_sp1:
-	b	wa_spectre_v2_el1_serror_sp1
-	check_vector_size wa_spectre_v2_el1_serror_sp1
+workaround_el1_serror_sp1:
+	b	workaround_el1_serror_sp1
+	check_vector_size workaround_el1_serror_sp1
 
 	/* -----------------------------------------------------
 	 * Lower EL using AArch64 : 0x400 - 0x580
 	 * -----------------------------------------------------
 	 */
 	.balign	128, INV_INSN
-wa_spectre_v2_el0_sync_a64:
+workaround_el0_sync_a64:
 	invalidate_branch_predictor
 	b	el0_sync_a64
-	check_vector_size wa_spectre_v2_el0_sync_a64
+	check_vector_size workaround_el0_sync_a64
 
 	.balign	128, INV_INSN
-wa_spectre_v2_el0_irq_a64:
+workaround_el0_irq_a64:
 	invalidate_branch_predictor
 	b	el0_irq_a64
-	check_vector_size wa_spectre_v2_el0_irq_a64
+	check_vector_size workaround_el0_irq_a64
 
 	.balign	128, INV_INSN
-wa_spectre_v2_el0_fiq_a64:
+workaround_el0_fiq_a64:
 	invalidate_branch_predictor
 	b	el0_fiq_a64
-	check_vector_size wa_spectre_v2_el0_fiq_a64
+	check_vector_size workaround_el0_fiq_a64
 
 	.balign	128, INV_INSN
-wa_spectre_v2_el0_serror_a64:
-	b   	wa_spectre_v2_el0_serror_a64
-	check_vector_size wa_spectre_v2_el0_serror_a64
+workaround_el0_serror_a64:
+	b   	workaround_el0_serror_a64
+	check_vector_size workaround_el0_serror_a64
 
 	/* -----------------------------------------------------
 	 * Lower EL using AArch32 : 0x0 - 0x180
 	 * -----------------------------------------------------
 	 */
 	.balign	128, INV_INSN
-wa_spectre_v2_el0_sync_a32:
+workaround_el0_sync_a32:
 	invalidate_branch_predictor
 	b	el0_sync_a32
-	check_vector_size wa_spectre_v2_el0_sync_a32
+	check_vector_size workaround_el0_sync_a32
 
 	.balign	128, INV_INSN
-wa_spectre_v2_el0_irq_a32:
+workaround_el0_irq_a32:
 	invalidate_branch_predictor
 	b	el0_irq_a32
-	check_vector_size wa_spectre_v2_el0_irq_a32
+	check_vector_size workaround_el0_irq_a32
 
 	.balign	128, INV_INSN
-wa_spectre_v2_el0_fiq_a32:
+workaround_el0_fiq_a32:
 	invalidate_branch_predictor
 	b	el0_fiq_a32
-	check_vector_size wa_spectre_v2_el0_fiq_a32
+	check_vector_size workaround_el0_fiq_a32
 
 	.balign	128, INV_INSN
-wa_spectre_v2_el0_serror_a32:
-	b	wa_spectre_v2_el0_serror_a32
-	check_vector_size wa_spectre_v2_el0_serror_a32
-
-	.macro discard_branch_history
-		str	x0, [sp, #THREAD_CORE_LOCAL_X0]
-		ldrb	w0, [sp, #THREAD_CORE_LOCAL_BHB_LOOP_COUNT]
-	1:	b	2f
-	2:	subs	w0, w0, #1
-		bne	1b
-		dsb	sy
-		isb
-		ldr	x0, [sp, #THREAD_CORE_LOCAL_X0]
-	.endm
-
-	.balign	2048, INV_INSN
-	.global thread_excp_vect_wa_spectre_bhb
-thread_excp_vect_wa_spectre_bhb:
-	/* -----------------------------------------------------
-	 * EL1 with SP0 : 0x0 - 0x180
-	 * -----------------------------------------------------
-	 */
-	.balign	128, INV_INSN
-wa_spectre_bhb_el1_sync_sp0:
-	b	el1_sync_sp0
-	check_vector_size wa_spectre_bhb_el1_sync_sp0
-
-	.balign	128, INV_INSN
-wa_spectre_bhb_el1_irq_sp0:
-	b	el1_irq_sp0
-	check_vector_size wa_spectre_bhb_el1_irq_sp0
-
-	.balign	128, INV_INSN
-wa_spectre_bhb_el1_fiq_sp0:
-	b	el1_fiq_sp0
-	check_vector_size wa_spectre_bhb_el1_fiq_sp0
-
-	.balign	128, INV_INSN
-wa_spectre_bhb_el1_serror_sp0:
-	b	el1_serror_sp0
-	check_vector_size wa_spectre_bhb_el1_serror_sp0
-
-	/* -----------------------------------------------------
-	 * Current EL with SP1: 0x200 - 0x380
-	 * -----------------------------------------------------
-	 */
-	.balign	128, INV_INSN
-wa_spectre_bhb_el1_sync_sp1:
-	b	wa_spectre_bhb_el1_sync_sp1
-	check_vector_size wa_spectre_bhb_el1_sync_sp1
-
-	.balign	128, INV_INSN
-wa_spectre_bhb_el1_irq_sp1:
-	b	wa_spectre_bhb_el1_irq_sp1
-	check_vector_size wa_spectre_bhb_el1_irq_sp1
-
-	.balign	128, INV_INSN
-wa_spectre_bhb_el1_fiq_sp1:
-	b	wa_spectre_bhb_el1_fiq_sp1
-	check_vector_size wa_spectre_bhb_el1_fiq_sp1
-
-	.balign	128, INV_INSN
-wa_spectre_bhb_el1_serror_sp1:
-	b	wa_spectre_bhb_el1_serror_sp1
-	check_vector_size wa_spectre_bhb_el1_serror_sp1
-
-	/* -----------------------------------------------------
-	 * Lower EL using AArch64 : 0x400 - 0x580
-	 * -----------------------------------------------------
-	 */
-	.balign	128, INV_INSN
-wa_spectre_bhb_el0_sync_a64:
-	discard_branch_history
-	b	el0_sync_a64
-	check_vector_size wa_spectre_bhb_el0_sync_a64
-
-	.balign	128, INV_INSN
-wa_spectre_bhb_el0_irq_a64:
-	discard_branch_history
-	b	el0_irq_a64
-	check_vector_size wa_spectre_bhb_el0_irq_a64
-
-	.balign	128, INV_INSN
-wa_spectre_bhb_el0_fiq_a64:
-	discard_branch_history
-	b	el0_fiq_a64
-	check_vector_size wa_spectre_bhb_el0_fiq_a64
-
-	.balign	128, INV_INSN
-wa_spectre_bhb_el0_serror_a64:
-	b   	wa_spectre_bhb_el0_serror_a64
-	check_vector_size wa_spectre_bhb_el0_serror_a64
-
-	/* -----------------------------------------------------
-	 * Lower EL using AArch32 : 0x0 - 0x180
-	 * -----------------------------------------------------
-	 */
-	.balign	128, INV_INSN
-wa_spectre_bhb_el0_sync_a32:
-	discard_branch_history
-	b	el0_sync_a32
-	check_vector_size wa_spectre_bhb_el0_sync_a32
-
-	.balign	128, INV_INSN
-wa_spectre_bhb_el0_irq_a32:
-	discard_branch_history
-	b	el0_irq_a32
-	check_vector_size wa_spectre_bhb_el0_irq_a32
-
-	.balign	128, INV_INSN
-wa_spectre_bhb_el0_fiq_a32:
-	discard_branch_history
-	b	el0_fiq_a32
-	check_vector_size wa_spectre_bhb_el0_fiq_a32
-
-	.balign	128, INV_INSN
-wa_spectre_bhb_el0_serror_a32:
-	b	wa_spectre_bhb_el0_serror_a32
-	check_vector_size wa_spectre_bhb_el0_serror_a32
+workaround_el0_serror_a32:
+	b	workaround_el0_serror_a32
+	check_vector_size workaround_el0_serror_a32
 #endif /*CFG_CORE_WORKAROUND_SPECTRE_BP_SEC*/
 
 /*
@@ -621,7 +466,6 @@ wa_spectre_bhb_el0_serror_a32:
  * that it's always available.
  */
 eret_to_el0:
-	pauth_el1_to_el0 x1
 
 #ifdef CFG_CORE_UNMAP_CORE_AT_EL0
 	/* Point to the vector into the reduced mapping */
@@ -640,7 +484,7 @@ eret_to_el0:
 #endif
 
 	/* Jump into the reduced mapping and continue execution */
-	adr_l	x1, 1f
+	ldr	x1, =1f
 	sub	x1, x1, x0
 	br	x1
 1:
@@ -675,22 +519,6 @@ BTI(	bti	j)
 
 	return_from_exception
 
-el0_sync_a64_finish:
-	mrs	x2, esr_el1
-	mrs	x3, sp_el0
-	lsr	x2, x2, #ESR_EC_SHIFT
-	cmp	x2, #ESR_EC_AARCH64_SVC
-	b.eq	el0_svc
-	b	el0_sync_abort
-
-el0_sync_a32_finish:
-	mrs	x2, esr_el1
-	mrs	x3, sp_el0
-	lsr	x2, x2, #ESR_EC_SHIFT
-	cmp	x2, #ESR_EC_AARCH32_SVC
-	b.eq	el0_svc
-	b	el0_sync_abort
-
 	/*
 	 * void icache_inv_user_range(void *addr, size_t size);
 	 *
@@ -707,16 +535,16 @@ icache_inv_user_range:
 
 #ifdef CFG_CORE_UNMAP_CORE_AT_EL0
 	/* Point to the vector into the reduced mapping */
-	adr_l	x7, thread_user_kcode_offset
-	ldr	x7, [x7]	/* this register must be preserved */
+	adr_l	x2, thread_user_kcode_offset
+	ldr	x2, [x2]
 	mrs	x4, vbar_el1	/* this register must be preserved */
-	sub	x3, x4, x7
+	sub	x3, x4, x2
 	msr	vbar_el1, x3
 	isb
 
 	/* Jump into the reduced mapping and continue execution */
-	adr	x3, 1f
-	sub	x3, x3, x7
+	ldr	x3, =1f
+	sub	x3, x3, x2
 	br	x3
 1:
 BTI(	bti	j)
@@ -760,8 +588,7 @@ BTI(	bti	j)
 	isb
 
 	/* Jump into the full mapping and continue execution */
-	adr	x0, 1f
-	add	x0, x0, x7
+	ldr	x0, =1f
 	br	x0
 1:
 BTI(	bti	j)
@@ -787,40 +614,22 @@ thread_excp_vect_end:
 END_FUNC thread_excp_vect
 
 LOCAL_FUNC el0_svc , :
-	pauth_el0_to_el1 x1
 	/* get pointer to current thread context in x0 */
 	get_thread_ctx sp, 0, 1, 2
 	mrs	x1, tpidr_el0
 	str	x1, [x0, #THREAD_CTX_REGS_TPIDR_EL0]
 	/* load saved kernel sp */
-	ldr	x3, [x0, #THREAD_CTX_KERN_SP]
+	ldr	x0, [x0, #THREAD_CTX_KERN_SP]
 	/* Keep pointer to initial recod in x1 */
 	mov	x1, sp
 	/* Switch to SP_EL0 and restore kernel sp */
 	msr	spsel, #0
 	mov	x2, sp	/* Save SP_EL0 */
-	mov	sp, x3
+	mov	sp, x0
 
 	/* Make room for struct thread_svc_regs */
 	sub	sp, sp, #THREAD_SVC_REG_SIZE
-	stp	x30, x2, [sp, #THREAD_SVC_REG_X30]
-
-#ifdef CFG_TA_PAUTH
-	/* Save APIAKEY */
-	read_apiakeyhi	x2
-	read_apiakeylo	x3
-	stp	x2, x3, [sp, #THREAD_SVC_REG_APIAKEY_HI]
-#endif
-
-#ifdef CFG_CORE_PAUTH
-	ldp	x2, x3, [x0, #THREAD_CTX_KEYS]
-	write_apiakeyhi	x2
-	write_apiakeylo	x3
-#endif
-#if defined(CFG_CORE_PAUTH) || defined(CFG_TA_PAUTH)
-	/* SCTLR or the APIA key has changed */
-	isb
-#endif
+	stp	x30,x2, [sp, #THREAD_SVC_REG_X30]
 
 	/* Restore x0-x3 */
 	ldp	x2, x3, [x1, #THREAD_CORE_LOCAL_X2]
@@ -831,7 +640,6 @@ LOCAL_FUNC el0_svc , :
 	mrs	x0, elr_el1
 	mrs	x1, spsr_el1
 	store_xregs sp, THREAD_SVC_REG_ELR, 0, 1
-
 	mov	x0, sp
 
 	/*
@@ -879,15 +687,7 @@ LOCAL_FUNC el0_svc , :
 
 	return_from_exception
 
-1:
-#ifdef	CFG_TA_PAUTH
-	/* Restore APIAKEY */
-	load_xregs x30, THREAD_SVC_REG_APIAKEY_HI, 0, 1
-	write_apiakeyhi	x0
-	write_apiakeylo	x1
-#endif
-
-	ldp	x0, x1, [x30, THREAD_SVC_REG_X0]
+1:	ldp	x0, x1, [x30, THREAD_SVC_REG_X0]
 	ldr	x30, [x30, #THREAD_SVC_REG_X30]
 
 	msr	spsel, #1
@@ -915,7 +715,7 @@ LOCAL_FUNC el1_sync_abort , :
 	b	.Lset_sp
 
 .Lsel_tmp_sp:
-	/* We have an abort while using the abort stack, select tmp stack */
+	/* Select tmp stack */
 	ldr	x2, [x0, #THREAD_CORE_LOCAL_TMP_STACK_VA_END]
 	orr	w1, w1, #THREAD_CLF_TMP	/* flags |= THREAD_CLF_TMP; */
 
@@ -937,18 +737,8 @@ LOCAL_FUNC el1_sync_abort , :
 	ldp	x2, x3, [x0, #THREAD_CORE_LOCAL_X2]
 	store_xregs sp, THREAD_ABT_REG_X2, 2, 29
 	/* Store x30, elr_el1 */
-	mrs	x1, elr_el1
-	stp	x30, x1, [sp, #THREAD_ABT_REG_X30]
-
-#if defined(CFG_CORE_PAUTH)
-	read_apiakeyhi	x2
-	read_apiakeylo	x3
-	stp	x2, x3, [sp, #THREAD_ABT_REGS_APIAKEY_HI]
-	ldp	x2, x3, [x0, #THREAD_CORE_LOCAL_KEYS]
-	write_apiakeyhi	x2
-	write_apiakeylo	x3
-	isb
-#endif
+	mrs	x0, elr_el1
+	stp	x30, x0, [sp, #THREAD_ABT_REG_X30]
 
 	/*
 	 * Call handler
@@ -980,13 +770,6 @@ LOCAL_FUNC el1_sync_abort , :
 	lsr	w0, w0, #THREAD_CLF_SAVED_SHIFT
 	str	w0, [sp, #THREAD_CORE_LOCAL_FLAGS]
 
-#if defined(CFG_CORE_PAUTH)
-	ldp	x0, x1, [x3, #THREAD_ABT_REGS_APIAKEY_HI]
-	write_apiakeyhi	x0
-	write_apiakeylo	x1
-	isb
-#endif
-
 	/* Restore x0 to x3 */
 	load_xregs sp, THREAD_CORE_LOCAL_X0, 0, 3
 
@@ -996,7 +779,6 @@ END_FUNC el1_sync_abort
 
 	/* sp_el0 in x3 */
 LOCAL_FUNC el0_sync_abort , :
-	pauth_el0_to_el1 x1
 	/*
 	 * Update core local flags
 	 */
@@ -1027,25 +809,8 @@ LOCAL_FUNC el0_sync_abort , :
 	ldp	x2, x3, [x0, #THREAD_CORE_LOCAL_X2]
 	store_xregs sp, THREAD_ABT_REG_X2, 2, 29
 	/* Store x30, elr_el1 */
-	mrs	x1, elr_el1
-	stp	x30, x1, [sp, #THREAD_ABT_REG_X30]
-
-#if defined(CFG_TA_PAUTH)
-	read_apiakeyhi	x2
-	read_apiakeylo	x3
-	stp	x2, x3, [sp, #THREAD_ABT_REGS_APIAKEY_HI]
-#endif
-
-#if defined(CFG_CORE_PAUTH)
-	ldp	x2, x3, [x0, #THREAD_CORE_LOCAL_KEYS]
-	write_apiakeyhi	x2
-	write_apiakeylo	x3
-#endif
-
-#if defined(CFG_CORE_PAUTH) || defined(CFG_TA_PAUTH)
-	/* SCTLR or the APIA key has changed */
-	isb
-#endif
+	mrs	x0, elr_el1
+	stp	x30, x0, [sp, #THREAD_ABT_REG_X30]
 
 	/*
 	 * Call handler
@@ -1078,21 +843,10 @@ LOCAL_FUNC el0_sync_abort , :
 	lsr	w1, w1, #THREAD_CLF_SAVED_SHIFT
 	str	w1, [sp, #THREAD_CORE_LOCAL_FLAGS]
 
-#if defined(CFG_TA_PAUTH) || defined(CFG_CORE_PAUTH)
-	ldp	x1, x2, [x3, #THREAD_ABT_REGS_APIAKEY_HI]
-	write_apiakeyhi	x1
-	write_apiakeylo	x2
-#endif
-
 	/* Restore x2 to x3 */
 	load_xregs sp, THREAD_CORE_LOCAL_X2, 2, 3
 
 	b_if_spsr_is_el0 w0, 1f
-
-#if defined(CFG_CORE_PAUTH)
-	/* the APIA key has changed */
-	isb
-#endif
 
 	/* Restore x0 to x1 */
 	load_xregs sp, THREAD_CORE_LOCAL_X0, 0, 1
@@ -1134,18 +888,6 @@ END_FUNC el0_sync_abort
 	/* Save original x0..x3 */
 	store_xregs x0, THREAD_CTX_REGS_X0, 10, 13
 
-#if defined(CFG_TA_PAUTH) || defined(CFG_CORE_PAUTH)
-	/* Save APIAKEY */
-	read_apiakeyhi	x1
-	read_apiakeylo	x2
-	store_xregs x0, THREAD_CTX_REGS_APIAKEY_HI, 1, 2
-#endif
-#if defined(CFG_CORE_PAUTH)
-	ldp	x1, x2, [sp, #THREAD_CORE_LOCAL_KEYS]
-	write_apiakeyhi	x1
-	write_apiakeylo	x2
-	isb
-#endif
 	/* load tmp_stack_va_end */
 	ldr	x1, [sp, #THREAD_CORE_LOCAL_TMP_STACK_VA_END]
 	/* Switch to SP_EL0 */
@@ -1197,23 +939,12 @@ END_FUNC el0_sync_abort
  * 	uint64_t x[19 - 4]; x4..x18
  * 	uint64_t lr;
  * 	uint64_t sp_el0;
- * #if defined(CFG_TA_PAUTH) || defined(CFG_CORE_PAUTH)
- * 	uint64_t apiakey_hi;
- * 	uint64_t apiakey_lo;
- * #endif
  * };
  */
 #define ELX_NINTR_REC_X(x)		(8 * ((x) - 4))
 #define ELX_NINTR_REC_LR		(8 + ELX_NINTR_REC_X(19))
 #define ELX_NINTR_REC_SP_EL0		(8 + ELX_NINTR_REC_LR)
-#if defined(CFG_TA_PAUTH) || defined(CFG_CORE_PAUTH)
-#define ELX_NINTR_REG_APIAKEY_HI	(8 + ELX_NINTR_REC_SP_EL0)
-#define ELX_NINTR_REG_APIAKEY_LO	(8 + ELX_NINTR_REG_APIAKEY_HI)
-#define ELX_NINTR_REC_SIZE		(8 + ELX_NINTR_REG_APIAKEY_LO)
-#else
 #define ELX_NINTR_REC_SIZE		(8 + ELX_NINTR_REC_SP_EL0)
-#endif
-
 
 /* The handler of native interrupt. */
 .macro native_intr_handler mode:req
@@ -1230,39 +961,24 @@ END_FUNC el0_sync_abort
 	orr	w1, w1, #THREAD_CLF_TMP
 	str	w1, [sp, #THREAD_CORE_LOCAL_FLAGS]
 
-	/*
-	 * Save registers on the temp stack that can be corrupted by a call
-	 * to a C function.
-	 *
-	 * Note that we're temporarily using x1 to access the temp stack
-	 * until we're ready to switch to sp_el0 and update sp.
-	 */
 	/* load tmp_stack_va_end */
 	ldr	x1, [sp, #THREAD_CORE_LOCAL_TMP_STACK_VA_END]
-	/* Make room for struct elx_nintr_rec */
-	sub	x1, x1, #ELX_NINTR_REC_SIZE
-	/* Store lr and original sp_el0 */
+	/* Keep original SP_EL0 */
 	mrs	x2, sp_el0
-	stp	x30, x2, [x1, #ELX_NINTR_REC_LR]
-	/* Store x4..x18 */
-	store_xregs x1, ELX_NINTR_REC_X(4), 4, 18
-
-#if defined(CFG_TA_PAUTH) || defined(CFG_CORE_PAUTH)
-	read_apiakeyhi	x2
-	read_apiakeylo	x3
-	stp	x2, x3, [x1, #ELX_NINTR_REG_APIAKEY_HI]
-#if defined(CFG_CORE_PAUTH)
-	ldp	x2, x3, [sp, #THREAD_CORE_LOCAL_KEYS]
-	write_apiakeyhi	x2
-	write_apiakeylo	x3
-#endif
-	/* SCTLR or the APIA key has changed */
-	isb
-#endif
-
 	/* Switch to SP_EL0 */
 	msr	spsel, #0
 	mov	sp, x1
+
+	/*
+	 * Save registers on stack that can be corrupted by a call to
+	 * a C function
+	 */
+	/* Make room for struct elx_nintr_rec */
+	sub	sp, sp, #ELX_NINTR_REC_SIZE
+	/* Store x4..x18 */
+	store_xregs sp, ELX_NINTR_REC_X(4), 4, 18
+	/* Store lr and original sp_el0 */
+	stp	x30, x2, [sp, #ELX_NINTR_REC_LR]
 
 	bl	thread_check_canaries
 	bl	itr_core_handler
@@ -1270,13 +986,6 @@ END_FUNC el0_sync_abort
 	/*
 	 * Restore registers
 	 */
-
-#if defined(CFG_TA_PAUTH) || defined(CFG_CORE_PAUTH)
-	ldp	x0, x1, [sp, #ELX_NINTR_REG_APIAKEY_HI]
-	write_apiakeyhi	x0
-	write_apiakeylo	x1
-#endif
-
 	/* Restore x4..x18 */
 	load_xregs sp, ELX_NINTR_REC_X(4), 4, 18
 	/* Load  lr and original sp_el0 */
@@ -1292,15 +1001,9 @@ END_FUNC el0_sync_abort
 	str	w0, [sp, #THREAD_CORE_LOCAL_FLAGS]
 
 	mrs	x0, spsr_el1
-
 	/* Restore x2..x3 */
 	load_xregs sp, THREAD_CORE_LOCAL_X2, 2, 3
 	b_if_spsr_is_el0 w0, 1f
-
-#if defined(CFG_CORE_PAUTH)
-	/* APIA key has changed */
-	isb
-#endif
 
 	/* Restore x0..x1 */
 	load_xregs sp, THREAD_CORE_LOCAL_X0, 0, 1

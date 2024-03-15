@@ -191,6 +191,37 @@ static void read_dyn(struct ta_elf *elf, vaddr_t addr,
 	}
 }
 
+static void save_hashtab_from_segment(struct ta_elf *elf, unsigned int type,
+				      vaddr_t addr, size_t memsz)
+{
+	size_t dyn_entsize = 0;
+	size_t num_dyns = 0;
+	size_t n = 0;
+	unsigned int tag = 0;
+	size_t val = 0;
+
+	if (type != PT_DYNAMIC)
+		return;
+
+	check_phdr_in_range(elf, type, addr, memsz);
+
+	if (elf->is_32bit)
+		dyn_entsize = sizeof(Elf32_Dyn);
+	else
+		dyn_entsize = sizeof(Elf64_Dyn);
+
+	assert(!(memsz % dyn_entsize));
+	num_dyns = memsz / dyn_entsize;
+
+	for (n = 0; n < num_dyns; n++) {
+		read_dyn(elf, addr, n, &tag, &val);
+		if (tag == DT_HASH) {
+			elf->hashtab = (void *)(val + elf->load_addr);
+			break;
+		}
+	}
+}
+
 static void check_range(struct ta_elf *elf, const char *name, const void *ptr,
 			size_t sz)
 {
@@ -231,75 +262,30 @@ static void check_hashtab(struct ta_elf *elf, void *ptr, size_t num_buckets,
 	check_range(elf, "DT_HASH", ptr, sz);
 }
 
-static void check_gnu_hashtab(struct ta_elf *elf, void *ptr)
-{
-	struct gnu_hashtab *h = ptr;
-	size_t num_words = 4; /* nbuckets, symoffset, bloom_size, bloom_shift */
-	size_t bloom_words = 0;
-	size_t sz = 0;
-
-	if (!IS_ALIGNED_WITH_TYPE(ptr, uint32_t))
-		err(TEE_ERROR_BAD_FORMAT, "Bad alignment of DT_GNU_HASH %p",
-		    ptr);
-
-	if (elf->gnu_hashtab_size < sizeof(*h))
-		err(TEE_ERROR_BAD_FORMAT, "DT_GNU_HASH too small");
-
-	/* Check validity of h->nbuckets and h->bloom_size */
-
-	if (elf->is_32bit)
-		bloom_words = h->bloom_size;
-	else
-		bloom_words = h->bloom_size * 2;
-	if (ADD_OVERFLOW(num_words, h->nbuckets, &num_words) ||
-	    ADD_OVERFLOW(num_words, bloom_words, &num_words) ||
-	    MUL_OVERFLOW(num_words, sizeof(uint32_t), &sz) ||
-	    sz > elf->gnu_hashtab_size)
-		err(TEE_ERROR_BAD_FORMAT, "DT_GNU_HASH overflow");
-}
-
 static void save_hashtab(struct ta_elf *elf)
 {
 	uint32_t *hashtab = NULL;
 	size_t n = 0;
 
 	if (elf->is_32bit) {
-		Elf32_Shdr *shdr = elf->shdr;
+		Elf32_Phdr *phdr = elf->phdr;
 
-		for (n = 0; n < elf->e_shnum; n++) {
-			void *addr = (void *)(vaddr_t)(shdr[n].sh_addr +
-						       elf->load_addr);
-
-			if (shdr[n].sh_type == SHT_HASH) {
-				elf->hashtab = addr;
-			} else if (shdr[n].sh_type == SHT_GNU_HASH) {
-				elf->gnu_hashtab = addr;
-				elf->gnu_hashtab_size = shdr[n].sh_size;
-			}
-		}
+		for (n = 0; n < elf->e_phnum; n++)
+			save_hashtab_from_segment(elf, phdr[n].p_type,
+						  phdr[n].p_vaddr,
+						  phdr[n].p_memsz);
 	} else {
-		Elf64_Shdr *shdr = elf->shdr;
+		Elf64_Phdr *phdr = elf->phdr;
 
-		for (n = 0; n < elf->e_shnum; n++) {
-			void *addr = (void *)(vaddr_t)(shdr[n].sh_addr +
-						       elf->load_addr);
-
-			if (shdr[n].sh_type == SHT_HASH) {
-				elf->hashtab = addr;
-			} else if (shdr[n].sh_type == SHT_GNU_HASH) {
-				elf->gnu_hashtab = addr;
-				elf->gnu_hashtab_size = shdr[n].sh_size;
-			}
-		}
+		for (n = 0; n < elf->e_phnum; n++)
+			save_hashtab_from_segment(elf, phdr[n].p_type,
+						  phdr[n].p_vaddr,
+						  phdr[n].p_memsz);
 	}
 
-	if (elf->hashtab) {
-		check_hashtab(elf, elf->hashtab, 0, 0);
-		hashtab = elf->hashtab;
-		check_hashtab(elf, elf->hashtab, hashtab[0], hashtab[1]);
-	}
-	if (elf->gnu_hashtab)
-		check_gnu_hashtab(elf, elf->gnu_hashtab);
+	check_hashtab(elf, elf->hashtab, 0, 0);
+	hashtab = elf->hashtab;
+	check_hashtab(elf, elf->hashtab, hashtab[0], hashtab[1]);
 }
 
 static void save_soname_from_segment(struct ta_elf *elf, unsigned int type,

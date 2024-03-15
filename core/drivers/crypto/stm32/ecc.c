@@ -354,12 +354,13 @@ static TEE_Result is_point_on_curve(struct stm32_pka_point *point,
 {
 	TEE_Result res = TEE_SUCCESS;
 	struct stm32_pka_bn r2modn = { };
+	size_t bytes = 0;
 
-	res = stm32_pka_get_max_size(&r2modn.size, NULL, cid);
+	res = stm32_pka_get_max_size(&bytes, NULL, cid);
 	if (res)
 		return res;
 
-	r2modn.val = calloc(1, r2modn.size);
+	r2modn.val = calloc(1, bytes);
 	if (!r2modn.val)
 		return TEE_ERROR_OUT_OF_MEMORY;
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 /*
- * Copyright (c) 2015-2022, Linaro Limited
+ * Copyright (c) 2015-2021, Linaro Limited
  */
 
 #include <arm.h>
@@ -23,7 +23,6 @@
 #include <kernel/tpm.h>
 #include <libfdt.h>
 #include <malloc.h>
-#include <memtag.h>
 #include <mm/core_memprot.h>
 #include <mm/core_mmu.h>
 #include <mm/fobj.h>
@@ -111,15 +110,6 @@ __weak unsigned long plat_get_aslr_seed(void)
 	DMSG("Warning: no ASLR seed");
 
 	return 0;
-}
-
-/*
- * This function is called as a guard after each smc call which is not
- * supposed to return.
- */
-void __panic_at_smc_return(void)
-{
-	panic();
 }
 
 #if defined(CFG_WITH_ARM_TRUSTED_FW)
@@ -284,15 +274,6 @@ static void init_asan(void)
 }
 #endif /*CFG_CORE_SANITIZE_KADDRESS*/
 
-#if defined(CFG_MEMTAG)
-/* Called from entry_a64.S only when MEMTAG is configured */
-void boot_init_memtag(void)
-{
-	memtag_init_ops(feat_mte_implemented());
-	memtag_set_tags((void *)TEE_RAM_START, TEE_RAM_PH_SIZE, 0);
-}
-#endif
-
 #ifdef CFG_WITH_PAGER
 
 #ifdef CFG_CORE_SANITIZE_KADDRESS
@@ -417,8 +398,7 @@ static void init_runtime(unsigned long pageable_part)
 	size_t pageable_start = (size_t)__pageable_start;
 	size_t pageable_end = (size_t)__pageable_end;
 	size_t pageable_size = pageable_end - pageable_start;
-	vaddr_t tzsram_end = TZSRAM_BASE + TZSRAM_SIZE - TEE_LOAD_ADDR +
-			     VCORE_START_VA;
+	size_t tzsram_end = TZSRAM_BASE + TZSRAM_SIZE;
 	size_t hash_size = (pageable_size / SMALL_PAGE_SIZE) *
 			   TEE_SHA256_HASH_SIZE;
 	const struct boot_embdata *embdata = (const void *)__init_end;
@@ -627,9 +607,6 @@ void *get_embedded_dt(void)
 #if defined(CFG_DT)
 void *get_external_dt(void)
 {
-	if (!IS_ENABLED(CFG_EXTERNAL_DT))
-		return NULL;
-
 	assert(cpu_mmu_enabled());
 	return external_dt.blob;
 }
@@ -637,9 +614,6 @@ void *get_external_dt(void)
 static TEE_Result release_external_dt(void)
 {
 	int ret = 0;
-
-	if (!IS_ENABLED(CFG_EXTERNAL_DT))
-		return TEE_SUCCESS;
 
 	if (!external_dt.blob)
 		return TEE_SUCCESS;
@@ -734,7 +708,7 @@ static int add_optee_dt_node(struct dt_descriptor *dt)
 
 	if (fdt_path_offset(dt->blob, "/firmware/optee") >= 0) {
 		DMSG("OP-TEE Device Tree node already exists!");
-		return 0;
+		return 1;
 	}
 
 	offs = fdt_path_offset(dt->blob, "/firmware");
@@ -785,6 +759,11 @@ static int add_optee_dt_node(struct dt_descriptor *dt)
 		if (ret < 0)
 			return -1;
 	}
+	
+	ret = fdt_setprop(dt->blob, offs, "u-boot,dm-pre-reloc",
+			  NULL, 0);
+	if (ret < 0)
+		return -1;
 	return 0;
 }
 
@@ -1098,9 +1077,6 @@ static void init_external_dt(unsigned long phys_dt)
 	void *fdt;
 	int ret;
 
-	if (!IS_ENABLED(CFG_EXTERNAL_DT))
-		return;
-
 	if (!phys_dt) {
 		/*
 		 * No need to panic as we're not using the DT in OP-TEE
@@ -1145,15 +1121,16 @@ static int mark_tzdram_as_reserved(struct dt_descriptor *dt)
 static void update_external_dt(void)
 {
 	struct dt_descriptor *dt = &external_dt;
-
-	if (!IS_ENABLED(CFG_EXTERNAL_DT))
-		return;
+	int node_already_exists = 0;
 
 	if (!dt->blob)
 		return;
 
-	if (!IS_ENABLED(CFG_CORE_FFA) && add_optee_dt_node(dt))
+	node_already_exists = add_optee_dt_node(dt);
+	if (!IS_ENABLED(CFG_CORE_FFA) && node_already_exists < 0)
 		panic("Failed to add OP-TEE Device Tree node");
+	else if (node_already_exists == 1)
+		return;
 
 	if (config_psci(dt))
 		panic("Failed to config PSCI");
@@ -1264,19 +1241,10 @@ void init_tee_runtime(void)
 	if (!IS_ENABLED(CFG_VIRTUALIZATION))
 		call_preinitcalls();
 	call_initcalls();
-
-	/*
-	 * These two functions uses crypto_rng_read() to initialize the
-	 * pauth keys. Once call_initcalls() returns we're guaranteed that
-	 * crypto_rng_read() is ready to be used.
-	 */
-	thread_init_core_local_pauth_keys();
-	thread_init_thread_pauth_keys();
 }
 
 static void init_primary(unsigned long pageable_part, unsigned long nsec_entry)
 {
-	thread_init_core_local_stacks();
 	/*
 	 * Mask asynchronous exceptions before switch to the thread vector
 	 * as the thread handler requires those to be masked while
@@ -1334,9 +1302,6 @@ void __weak boot_init_primary_late(unsigned long fdt)
 	DMSG("Executing at offset %#lx with virtual load address %#"PRIxVA,
 	     (unsigned long)boot_mmu_config.load_offset, VCORE_START_VA);
 #endif
-	if (IS_ENABLED(CFG_MEMTAG))
-		DMSG("Memory tagging %s",
-		     memtag_is_enabled() ?  "enabled" : "disabled");
 
 	main_init_gic();
 	init_vfp_nsec();

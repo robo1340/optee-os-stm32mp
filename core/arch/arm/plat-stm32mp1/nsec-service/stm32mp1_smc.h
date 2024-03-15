@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
  * Copyright (c) 2016-2021, STMicroelectronics
- * Copyright (c) 2018, Linaro Limited
+ * Copyright (c) 2018-2021, Linaro Limited
  */
 #ifndef __STM32MP1_SMC_H__
 #define __STM32MP1_SMC_H__
@@ -95,7 +95,6 @@
  */
 #define STM32_SIP_SVC_FUNC_BSEC			0x1003
 
-
 /*
  * SIP function STM32_SIP_FUNC_PD_DOMAIN
  *
@@ -111,15 +110,16 @@
 #define STM32_SIP_PD_CORE_RET			0x1
 #define STM32_SIP_PD_CORE			0x2
 #define STM32_SIP_PD_MAX_PM_DOMAIN		0x3
+
 /*
- * SIP function STM32_SIP_SVC_FUNC_SCMI_AGENT
- * SIP function STM32_SIP_SVC_FUNC_SCMI_AGENT1 - Obsolete
+ * SIP function STM32_SIP_SVC_FUNC_SCMI_AGENT0
+ * SIP function STM32_SIP_SVC_FUNC_SCMI_AGENT1
  *
  * Process SCMI message pending in related SCMI shared memory buffer.
  *
  * Argument a0: (input) SMCC ID
  */
-#define STM32_SIP_SVC_FUNC_SCMI_AGENT		0x2000
+#define STM32_SIP_SVC_FUNC_SCMI_AGENT0		0x2000
 #define STM32_SIP_SVC_FUNC_SCMI_AGENT1		0x2001
 
 /*

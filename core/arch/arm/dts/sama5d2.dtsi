@@ -32,8 +32,6 @@
 			compatible = "arm,cortex-a5";
 			reg = <0>;
 			next-level-cache = <&L2>;
-			clocks = <&pmc PMC_TYPE_CORE PMC_MCK_PRES>;
-			clock-names = "cpu";
 		};
 	};
 
@@ -94,13 +92,11 @@
 	};
 
 	ns_sram: sram@200000 {
-		compatible = "atmel,sama5d2-sram", "mmio-sram";
+		compatible = "mmio-sram";
 		reg = <0x00200000 0x20000>;
 		#address-cells = <1>;
 		#size-cells = <1>;
 		ranges = <0 0x00200000 0x20000>;
-		status = "disabled";
-		secure-status = "okay";
 	};
 
 	ahb {
@@ -405,8 +401,6 @@
 				interrupts = <36 IRQ_TYPE_LEVEL_HIGH 0>;
 				clocks = <&pmc PMC_TYPE_PERIPHERAL 36>, <&pmc PMC_TYPE_GCK 36>, <&clk32k>;
 				clock-names = "t0_clk", "gclk", "slow_clk";
-				status = "disabled";
-				secure-status = "okay";
 			};
 
 			hsmc: hsmc@f8014000 {
@@ -666,8 +660,6 @@
 				#size-cells = <1>;
 				no-memory-wc;
 				ranges = <0 0xf8044000 0x1420>;
-				status = "disabled";
-				secure-status = "okay";
 			};
 
 			reset_controller: rstc@f8048000 {
@@ -698,7 +690,6 @@
 				interrupts = <4 IRQ_TYPE_LEVEL_HIGH 7>;
 				clocks = <&clk32k>;
 				status = "disabled";
-				secure-status = "okay";
 			};
 
 			clk32k: sckc@f8048050 {
@@ -714,8 +705,6 @@
 				reg = <0xf80480b0 0x30>;
 				interrupts = <74 IRQ_TYPE_LEVEL_HIGH 7>;
 				clocks = <&clk32k>;
-				status = "disabled";
-				secure-status = "okay";
 			};
 
 			i2s0: i2s@f8050000 {
@@ -1031,16 +1020,6 @@
 				atmel,external-irqs = <49>;
 			};
 
-			saic: interrupt-controller@f803c000 {
-				#interrupt-cells = <3>;
-				compatible = "atmel,sama5d2-saic";
-				interrupt-controller;
-				reg = <0xf803c000 0x200>;
-				atmel,external-irqs = <49>;
-				status = "disabled";
-				secure-status = "okay";
-			};
-
 			i2c1: i2c@fc028000 {
 				compatible = "atmel,sama5d2-i2c";
 				reg = <0xfc028000 0x100>;
@@ -1105,8 +1084,6 @@
 
 				gpio-controller;
 				#gpio-cells = <2>;
-				status = "disabled";
-				secure-status = "okay";
 			};
 
 			tdes@fc044000 {

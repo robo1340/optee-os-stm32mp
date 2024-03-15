@@ -174,7 +174,7 @@ static TEE_Result stm32_lpt_counter_cancel_alarm(struct counter_device *counter)
 
 	/*
 	 * LPTIM_CMP & ARR registers must only be modified
-	 * when the LPTIM is enabled
+	 * when the LPTIM is disabled
 	 */
 	io_setbits32(base + _LPTIM_CR, _LPTIM_CR_ENABLE);
 	io_write32(base + _LPTIM_CMP, 0);
@@ -493,8 +493,8 @@ __weak TEE_Result stm32_lptimer_get_platdata(struct stm32_lptimer_platdata *pdat
 
 static struct lptimer_device *stm32_lptimer_alloc(void)
 {
-	struct lptimer_device *lpt_dev = NULL;
-	struct lptimer_driver_data *lpt_ddata = NULL;
+	struct lptimer_device *lpt_dev;
+	struct lptimer_driver_data *lpt_ddata;
 
 	lpt_dev = calloc(1, sizeof(*lpt_dev));
 	lpt_ddata = calloc(1, sizeof(*lpt_ddata));
@@ -504,20 +504,18 @@ static struct lptimer_device *stm32_lptimer_alloc(void)
 		return lpt_dev;
 	}
 
-	free(lpt_dev);
-	free(lpt_ddata);
-
 	return NULL;
 }
 
 static void stm32_lptimer_free(struct lptimer_device *lpt_dev)
 {
-	if (lpt_dev) {
+	if (lpt_dev->itr)
 		itr_free(lpt_dev->itr);
 
-		if (lpt_dev->counter_dev)
-			counter_dev_free(lpt_dev->counter_dev);
+	if (lpt_dev->counter_dev)
+		counter_dev_free(lpt_dev->counter_dev);
 
+	if (lpt_dev) {
 		free(lpt_dev->ddata);
 		free(lpt_dev);
 	}
@@ -536,6 +534,9 @@ static TEE_Result probe_lpt_device(struct lptimer_device *lpt_dev)
 	res = stm32_lptimer_parse_fdt(lpt_dev);
 	if (res)
 		return res;
+
+	if (!lpt_dev->ddata)
+		stm32_lptimer_set_driverdata(lpt_dev);
 
 	lpt_dev->itr = itr_alloc_add(lpt_dev->pdata.irq, stm32_lptimer_itr,
 				     ITRF_TRIGGER_LEVEL, lpt_dev);

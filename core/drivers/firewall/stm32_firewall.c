@@ -49,7 +49,7 @@ static struct stm32_firewall_device *find_device(paddr_t base, size_t size,
 				return fdev;
 			}
 
-			if (reg->size && base >= reg->addr &&
+			if (reg->addr && reg->size && base >= reg->addr &&
 			    base + size - 1 <= reg->addr + reg->size - 1) {
 				*idx = i;
 				return fdev;
@@ -166,7 +166,6 @@ stm32_firewall_bus_dt_register(struct stm32_firewall_device *fdev,
 	name = fdt_get_name(fdt, node, NULL);
 
 	compat = fdt_getprop(fdt, node, "compatible", &len);
-	assert(compat);
 
 	if (fdev->ops->has_access(fdev, id, pbase, 0, sec_cfg)) {
 		const struct stm32_firewall_cfg non_sec_cfg[] = {

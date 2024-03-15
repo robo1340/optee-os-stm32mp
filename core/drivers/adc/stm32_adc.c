@@ -1001,7 +1001,8 @@ static TEE_Result stm32_adc_probe(const void *fdt, int node,
 
 	name = fdt_get_name(fdt, node, NULL);
 	pname = fdt_get_name(fdt, pnode, NULL);
-	adc_dev->name = calloc(1, strlen(name) + strlen(pname) + 2);
+	adc_dev->name = calloc(1, sizeof(adc_dev->name) *
+			       (strlen(name) + strlen(pname) + 2));
 	if (!adc_dev->name) {
 		res = TEE_ERROR_OUT_OF_MEMORY;
 		goto err;

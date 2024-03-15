@@ -37,6 +37,29 @@
 
 #if !defined(MBEDTLS_XTEA_ALT)
 
+/*
+ * 32-bit integer manipulation macros (big endian)
+ */
+#ifndef GET_UINT32_BE
+#define GET_UINT32_BE(n,b,i)                            \
+{                                                       \
+    (n) = ( (uint32_t) (b)[(i)    ] << 24 )             \
+        | ( (uint32_t) (b)[(i) + 1] << 16 )             \
+        | ( (uint32_t) (b)[(i) + 2] <<  8 )             \
+        | ( (uint32_t) (b)[(i) + 3]       );            \
+}
+#endif
+
+#ifndef PUT_UINT32_BE
+#define PUT_UINT32_BE(n,b,i)                            \
+{                                                       \
+    (b)[(i)    ] = (unsigned char) ( (n) >> 24 );       \
+    (b)[(i) + 1] = (unsigned char) ( (n) >> 16 );       \
+    (b)[(i) + 2] = (unsigned char) ( (n) >>  8 );       \
+    (b)[(i) + 3] = (unsigned char) ( (n)       );       \
+}
+#endif
+
 void mbedtls_xtea_init( mbedtls_xtea_context *ctx )
 {
     memset( ctx, 0, sizeof( mbedtls_xtea_context ) );
@@ -61,7 +84,7 @@ void mbedtls_xtea_setup( mbedtls_xtea_context *ctx, const unsigned char key[16] 
 
     for( i = 0; i < 4; i++ )
     {
-        ctx->k[i] = MBEDTLS_GET_UINT32_BE( key, i << 2 );
+        GET_UINT32_BE( ctx->k[i], key, i << 2 );
     }
 }
 
@@ -75,8 +98,8 @@ int mbedtls_xtea_crypt_ecb( mbedtls_xtea_context *ctx, int mode,
 
     k = ctx->k;
 
-    v0 = MBEDTLS_GET_UINT32_BE( input, 0 );
-    v1 = MBEDTLS_GET_UINT32_BE( input, 4 );
+    GET_UINT32_BE( v0, input, 0 );
+    GET_UINT32_BE( v1, input, 4 );
 
     if( mode == MBEDTLS_XTEA_ENCRYPT )
     {
@@ -101,8 +124,8 @@ int mbedtls_xtea_crypt_ecb( mbedtls_xtea_context *ctx, int mode,
         }
     }
 
-    MBEDTLS_PUT_UINT32_BE( v0, output, 0 );
-    MBEDTLS_PUT_UINT32_BE( v1, output, 4 );
+    PUT_UINT32_BE( v0, output, 0 );
+    PUT_UINT32_BE( v1, output, 4 );
 
     return( 0 );
 }

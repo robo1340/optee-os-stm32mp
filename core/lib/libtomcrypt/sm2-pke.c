@@ -8,7 +8,6 @@
 #include <io.h>
 #include <stdlib.h>
 #include <string.h>
-#include <string_ext.h>
 #include <tee_api_types.h>
 #include <tee/tee_cryp_utl.h>
 #include <trace.h>

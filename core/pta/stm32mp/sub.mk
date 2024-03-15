@@ -1,1 +1,0 @@
-srcs-$(CFG_BSEC_PTA) += bsec_pta.c

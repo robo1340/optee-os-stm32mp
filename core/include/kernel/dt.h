@@ -202,24 +202,27 @@ void _fdt_fill_device_info(const void *fdt, struct dt_node_info *info,
  * FDT error value otherwise.
  */
 int _fdt_read_uint32_array(const void *fdt, int node, const char *prop_name,
-			   uint32_t *array, size_t count);
+			   uint32_t *array, uint32_t count);
 
 /*
  * Read one cell from a given property of the given node.
- * Returns 0 on success, or a negative FDT error value otherwise.
+ * Returns 0 on success, or a negative
+ * FDT error value otherwise.
  */
 int _fdt_read_uint32(const void *fdt, int node, const char *prop_name,
 		     uint32_t *value);
 
 /*
- * Read one cell from a property of a cell or default to a given value
- * Returns the 32bit cell value or @dflt_value on failure.
+ * Read one cell from a given property of the given node.
+ * if cell is empty then return the default value (dflt_value)
+ * Returns 0 on success, or a negative
+ * FDT error value otherwise.
  */
 uint32_t _fdt_read_uint32_default(const void *fdt, int node,
 				  const char *prop_name, uint32_t dflt_value);
 
 /*
- * Check whether the node at @node has a reference name.
+ * Check whether the node at @node contains a property.
  *
  * @node is the offset of the node that describes the device in @fdt.
  *
@@ -267,29 +270,28 @@ static inline void _fdt_fill_device_info(const void *fdt __unused,
 	panic();
 }
 
-static inline int _fdt_read_uint32_array(const void *fdt __unused,
-					 int node __unused,
-					 const char *prop_name __unused,
-					 uint32_t *array __unused,
-					 size_t count __unused)
-{
+static inline int _fdt_read_uint32_array(const void *fdt, int node,
+					 const char *prop_name,
+					 uint32_t *array, uint32_t count) {
 	return -1;
 }
 
-static inline int _fdt_read_uint32(const void *fdt __unused,
-				   int node __unused,
-				   const char *prop_name __unused,
-				   uint32_t *value __unused)
-{
+static inline int _fdt_read_uint32(const void *fdt, int node,
+				   const char *prop_name,
+				   uint32_t *value) {
 	return -1;
 }
 
-static inline uint32_t _fdt_read_uint32_default(const void *fdt __unused,
-						int node __unused,
-						const char *prop_name __unused,
-						uint32_t dflt_value __unused)
+static inline uint32_t _fdt_read_uint32_default(const void *fdt, int node,
+						const char *prop_name,
+						uint32_t dflt_value)
 {
 	return dflt_value;
+}
+
+static inline bool _fdt_check_node(const void *fdt, int node)
+{
+	return false;
 }
 
 #endif /* !CFG_DT */

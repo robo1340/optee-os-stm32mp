@@ -6,6 +6,7 @@
 #define OPTEE_SMC_H
 
 #include <stdint.h>
+#include <util.h>
 
 /*
  * This file is exported by OP-TEE and is in kept in sync between secure
@@ -135,35 +136,19 @@
 /*
  * Call with struct optee_msg_arg as argument
  *
- * When called with OPTEE_SMC_CALL_WITH_RPC_ARG or
- * OPTEE_SMC_CALL_WITH_REGD_ARG in a0 there is one RPC struct optee_msg_arg
- * following after the first struct optee_msg_arg. The RPC struct
- * optee_msg_arg has reserved space for the number of RPC parameters as
- * returned by OPTEE_SMC_EXCHANGE_CAPABILITIES.
- *
- * When calling these functions normal world has a few responsibilities:
+ * When calling this function normal world has a few responsibilities:
  * 1. It must be able to handle eventual RPCs
  * 2. Non-secure interrupts should not be masked
- * 3. If asynchronous notifications has been negotiated successfully, then
+ * 3. If asynchronous notifications has be negotiated successfully, then
  *    the interrupt for asynchronous notifications should be unmasked
  *    during this call.
  *
- * Call register usage, OPTEE_SMC_CALL_WITH_ARG and
- * OPTEE_SMC_CALL_WITH_RPC_ARG:
- * a0	SMC Function ID, OPTEE_SMC_CALL_WITH_ARG or OPTEE_SMC_CALL_WITH_RPC_ARG
+ * Call register usage:
+ * a0	SMC Function ID, OPTEE_SMC*CALL_WITH_ARG
  * a1	Upper 32 bits of a 64-bit physical pointer to a struct optee_msg_arg
  * a2	Lower 32 bits of a 64-bit physical pointer to a struct optee_msg_arg
  * a3	Cache settings, not used if physical pointer is in a predefined shared
  *	memory area else per OPTEE_SMC_SHM_*
- * a4-6	Not used
- * a7	Hypervisor Client ID register
- *
- * Call register usage, OPTEE_SMC_CALL_WITH_REGD_ARG:
- * a0	SMC Function ID, OPTEE_SMC_CALL_WITH_REGD_ARG
- * a1	Upper 32 bits of a 64-bit shared memory cookie
- * a2	Lower 32 bits of a 64-bit shared memory cookie
- * a3	Offset of the struct optee_msg_arg in the shared memory with the
- *	supplied cookie
  * a4-6	Not used
  * a7	Hypervisor Client ID register
  *
@@ -199,10 +184,6 @@
 #define OPTEE_SMC_FUNCID_CALL_WITH_ARG OPTEE_MSG_FUNCID_CALL_WITH_ARG
 #define OPTEE_SMC_CALL_WITH_ARG \
 	OPTEE_SMC_STD_CALL_VAL(OPTEE_SMC_FUNCID_CALL_WITH_ARG)
-#define OPTEE_SMC_CALL_WITH_RPC_ARG \
-	OPTEE_SMC_STD_CALL_VAL(OPTEE_SMC_FUNCID_CALL_WITH_RPC_ARG)
-#define OPTEE_SMC_CALL_WITH_REGD_ARG \
-	OPTEE_SMC_STD_CALL_VAL(OPTEE_SMC_FUNCID_CALL_WITH_REGD_ARG)
 
 /*
  * Get Shared Memory Config
@@ -286,10 +267,6 @@
  * a0	OPTEE_SMC_RETURN_OK
  * a1	bitfield of secure world capabilities OPTEE_SMC_SEC_CAP_*
  * a2	The maximum secure world notification number
- * a3	Bit[7:0]: Number of parameters needed for RPC to be supplied
- *		  as the second MSG arg struct for
- *		  OPTEE_SMC_CALL_WITH_ARG
- *	Bit[31:8]: Reserved (MBZ)
  * a3-7	Preserved
  *
  * Error return register usage:
@@ -314,8 +291,8 @@
 #define OPTEE_SMC_SEC_CAP_MEMREF_NULL		BIT(4)
 /* Secure world supports asynchronous notification of normal world */
 #define OPTEE_SMC_SEC_CAP_ASYNC_NOTIF		BIT(5)
-/* Secure world supports pre-allocating RPC arg struct */
-#define OPTEE_SMC_SEC_CAP_RPC_ARG		BIT(6)
+/* Secure world is built with OCALL support */
+#define OPTEE_SMC_SEC_CAP_OCALL			BIT(31)
 
 #define OPTEE_SMC_FUNCID_EXCHANGE_CAPABILITIES	U(9)
 #define OPTEE_SMC_EXCHANGE_CAPABILITIES \
@@ -516,7 +493,7 @@
  * OP-TEE keeps a record of all posted values. When an interrupt is
  * received which indicates that there are posted values this function
  * should be called until all pended values have been retrieved. When a
- * value is retrieved, it's cleared from the record in secure world.
+ * value is retrieved it's cleared from the record in secure world.
  *
  * It is expected that this function is called from an interrupt handler
  * in normal world.
@@ -549,28 +526,16 @@
  */
 #define OPTEE_SMC_ASYNC_NOTIF_VALUE_DO_BOTTOM_HALF	0
 
-/*
- * Notification that OP-TEE triggers an interrupt event to Linux kernel
- * for an interrupt consumer.
- */
-#define OPTEE_SMC_ASYNC_NOTIF_VALUE_DO_IT		U(1)
-
 #define OPTEE_SMC_FUNCID_GET_ASYNC_NOTIF_VALUE	17
 #define OPTEE_SMC_GET_ASYNC_NOTIF_VALUE \
 	OPTEE_SMC_FAST_CALL_VAL(OPTEE_SMC_FUNCID_GET_ASYNC_NOTIF_VALUE)
 
-/* See OPTEE_SMC_CALL_WITH_RPC_ARG above */
-#define OPTEE_SMC_FUNCID_CALL_WITH_RPC_ARG	U(18)
-
-/* See OPTEE_SMC_CALL_WITH_REGD_ARG above */
-#define OPTEE_SMC_FUNCID_CALL_WITH_REGD_ARG	U(19)
-
 /*
  * Retrieve a value of interrupt notifications pending since the last call
  * of this function. Interrupt notification (IT_NOTIF) differs from ASYNC_NOTIF
- * in that ASYNC_NOTIF allows non-secure world to wake or request a secure
- * threaded execution while IT_NOTIF triggers an interrupt context event in the
- * non-secure world, that is a event handler from a top half interrupt context.
+ * in that ASYNC_NOTIF allows non-secure world to wake or request a secure threaded
+ * execution while IT_NOTIF triggers an interrupt context event in the non-secure
+ * world, that is a event handler from a top half interrupt context.
  *
  * OP-TEE keeps a record of all posted values. When an interrupt is
  * received by the REE, which indicates that there are posted values,
@@ -602,7 +567,12 @@
 #define OPTEE_SMC_IT_NOTIF_VALID	BIT(0)
 #define OPTEE_SMC_IT_NOTIF_PENDING	BIT(1)
 
-#define OPTEE_SMC_FUNCID_GET_IT_NOTIF_VALUE	U(53)
+#define OPTEE_SMC_ASYNC_NOTIF_VALUE_DO_IT		1
+
+/*
+ * Interrupts from OP-TEE.
+ */
+#define OPTEE_SMC_FUNCID_GET_IT_NOTIF_VALUE	53
 #define OPTEE_SMC_GET_IT_NOTIF_VALUE \
 	OPTEE_SMC_FAST_CALL_VAL(OPTEE_SMC_FUNCID_GET_IT_NOTIF_VALUE)
 
@@ -627,52 +597,9 @@
  * a0	OPTEE_SMC_RETURN_ENOTAVAIL
  * a1-7	Preserved
  */
-#define OPTEE_SMC_FUNCID_SET_IT_NOTIF_MASK	U(54)
+#define OPTEE_SMC_FUNCID_SET_IT_NOTIF_MASK	54
 #define OPTEE_SMC_SET_IT_NOTIF_MASK \
 	OPTEE_SMC_FAST_CALL_VAL(OPTEE_SMC_FUNCID_SET_IT_NOTIF_MASK)
-
-/*
- * Access to the secure watchdog.
- *
- * Call requests usage:
- * a0	SMC Function ID, OPTEE_SMC_WATCHDOG
- * a1	Watchdog command
- *	0 : Init watchdog
- *	1 : Set timeout
- *	2 : Enable watchdog
- *	3 : Ping the watchdog for refresh
- *	4 : Get time left
- * a2	if a1 == 1, the timeout value to set
- *	if a1 == 2, 0 to stop the watchdog, 1 to enable it.
- *	preserved otherwise
- * a3-6	Not used
- * a7	Hypervisor Client ID register
- *
- * Normal return register usage:
- * a0 PSCI_RET_SUCCESS
- * a1	if a1 == 0, the minimal timeout value supported by watchdog
- *	if a1 == 4, the remaining time before watchdog expires
- *	preserved otherwise.
- * a2	if a1 == 0, the maximum timeout value supported by watchdog
- *	preserved otherwise.
- * a3-7	Preserved
- *
- * Error return:
- * a0	PSCI_RET_NOT_SUPPORTED		Function not supported
- *	PSCI_RET_INVALID_PARAMETERS	Invalid arguments
- *	PSCI_RET_INTERNAL_FAILURE	Device error
- * a1-7 Preserved
- *
- * By SMCCC convention:
- * PSCI_RET_SUCCESS, OPTEE_SMC_RETURN_OK and ARM_SMCCC_RET_SUCCESS
- * are equal.
- * PSCI_RET_NOT_SUPPORTED, OPTEE_SMC_RETURN_UNKNOWN_FUNCTION and
- * ARM_SMCCC_RET_NOT_SUPPORTED are equal.
- *
- */
-#define OPTEE_SMC_FUNCID_WATCHDOG		U(90)
-#define OPTEE_SMC_WATCHDOG \
-	OPTEE_SMC_FAST_CALL_VAL(OPTEE_SMC_FUNCID_WATCHDOG)
 
 /*
  * Resume from RPC (for example after processing a foreign interrupt)
@@ -802,29 +729,6 @@
 #define OPTEE_SMC_RPC_FUNC_CMD		U(5)
 #define OPTEE_SMC_RETURN_RPC_CMD \
 	OPTEE_SMC_RPC_VAL(OPTEE_SMC_RPC_FUNC_CMD)
-
-/*
- * Do an OCall RPC request to caller client. The Ocall request ABI is very
- * minimal: 2 input arguments and 2 output arguments. 1st output argument
- * value 0 is reserved to error management requesting OCall termination.
- * When 1st output argument is 0, 2nd output argument is either 0 or can
- * carry a TEEC_Result like error code.
- *
- * "Call" register usage:
- * a0	OPTEE_SMC_RETURN_RPC_OCALL2
- * a1	OCall input argument 1 (32 bit)
- * a2	OCall input argument 2 (32 bit)
- * a3-7	Resume information, must be preserved
- *
- * "Return" register usage:
- * a0	SMC Function ID, OPTEE_SMC_CALL_RETURN_FROM_RPC.
- * a1	OCall output argument 1 (32 bit), value 0 upon error
- * a2	OCall output argument 2 (32 bit), TEEC_Result error if @a1 is 0
- * a3-7	Preserved
- */
-#define OPTEE_SMC_RPC_FUNC_OCALL2		U(2048)
-#define OPTEE_SMC_RETURN_RPC_OCALL2 \
-	OPTEE_SMC_RPC_VAL(OPTEE_SMC_RPC_FUNC_OCALL2)
 
 /* Returned in a0 */
 #define OPTEE_SMC_RETURN_UNKNOWN_FUNCTION U(0xFFFFFFFF)

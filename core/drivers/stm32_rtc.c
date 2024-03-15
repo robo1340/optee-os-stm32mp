@@ -164,12 +164,11 @@ static void stm32_rtc_read_calendar(struct stm32_rtc_calendar *calendar)
 	bool bypshad = stm32_rtc_get_bypshad();
 
 	if (!bypshad) {
-		uint64_t to = 0;
+		uint64_t to = timeout_init_us(TIMEOUT_US_RTC_SHADOW);
 
 		/* Wait calendar registers are ready */
 		io_clrbits32(rtc_base + RTC_ICSR, RTC_ICSR_RSF);
 
-		to = timeout_init_us(TIMEOUT_US_RTC_SHADOW);
 		while (!(io_read32(rtc_base + RTC_ICSR) & RTC_ICSR_RSF))
 			if (timeout_elapsed(to))
 				break;
@@ -415,22 +414,17 @@ void stm32_rtc_set_tamper_timestamp(void)
 	clk_disable(rtc_dev.pclk);
 }
 
-TEE_Result stm32_rtc_is_timestamp_enable(bool *ret)
+bool stm32_rtc_is_timestamp_enable(void)
 {
-	TEE_Result res = TEE_ERROR_GENERIC;
+	bool ret = false;
 
-	if (!rtc_dev.pclk)
-		return res;
+	clk_enable(rtc_dev.pclk);
 
-	res = clk_enable(rtc_dev.pclk);
-	if (res)
-		return res;
-
-	*ret = io_read32(get_base() + RTC_CR) & RTC_CR_TAMPTS;
+	ret = io_read32(get_base() + RTC_CR) & RTC_CR_TAMPTS;
 
 	clk_disable(rtc_dev.pclk);
 
-	return TEE_SUCCESS;
+	return ret;
 }
 
 static TEE_Result parse_dt(const void *fdt, int node,

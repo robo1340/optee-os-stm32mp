@@ -18,6 +18,7 @@
 #include <mm/core_mmu.h>
 #include <mm/mobj.h>
 #include <optee_msg.h>
+#include <sm/optee_smc.h>
 #include <string.h>
 #include <tee/entry_std.h>
 #include <tee/tee_cryp_utl.h>
@@ -25,8 +26,7 @@
 #include <util.h>
 
 #define SHM_CACHE_ATTRS	\
-	(uint32_t)(core_mmu_is_shm_cached() ? \
-		   TEE_MATTR_MEM_TYPE_CACHED : TEE_MATTR_MEM_TYPE_DEV)
+	(uint32_t)(core_mmu_is_shm_cached() ?  OPTEE_SMC_SHM_CACHED : 0)
 
 /* Sessions opened from normal world */
 static struct tee_ta_session_head tee_open_sessions =
@@ -254,7 +254,7 @@ static void cleanup_shm_refs(const uint64_t *saved_attr,
 {
 	size_t n;
 
-	for (n = 0; n < MIN((unsigned int)TEE_NUM_PARAMS, num_params); n++) {
+	for (n = 0; n < num_params; n++) {
 		switch (saved_attr[n]) {
 		case OPTEE_MSG_ATTR_TYPE_TMEM_INPUT:
 		case OPTEE_MSG_ATTR_TYPE_TMEM_OUTPUT:
@@ -358,6 +358,7 @@ static void entry_open_session(struct optee_msg_arg *arg, uint32_t num_params)
 	TEE_UUID uuid;
 	struct tee_ta_param param;
 	size_t num_meta;
+	size_t num_sess_params = 0;
 	uint64_t saved_attr[TEE_NUM_PARAMS] = { 0 };
 
 	res = get_open_session_meta(num_params, arg->params, &num_meta, &uuid,
@@ -365,7 +366,13 @@ static void entry_open_session(struct optee_msg_arg *arg, uint32_t num_params)
 	if (res != TEE_SUCCESS)
 		goto out;
 
-	res = copy_in_params(arg->params + num_meta, num_params - num_meta,
+	if (SUB_OVERFLOW(num_params, num_meta, &num_sess_params) ||
+	    num_sess_params > TEE_NUM_PARAMS) {
+		res = TEE_ERROR_BAD_PARAMETERS;
+		goto out;
+	}
+
+	res = copy_in_params(arg->params + num_meta, num_sess_params,
 			     &param, saved_attr);
 	if (res != TEE_SUCCESS)
 		goto cleanup_shm_refs;
@@ -374,7 +381,7 @@ static void entry_open_session(struct optee_msg_arg *arg, uint32_t num_params)
 				  &clnt_id, TEE_TIMEOUT_INFINITE, &param);
 	if (res != TEE_SUCCESS)
 		s = NULL;
-	copy_out_param(&param, num_params - num_meta, arg->params + num_meta,
+	copy_out_param(&param, num_sess_params, arg->params + num_meta,
 		       saved_attr);
 
 	/*
@@ -386,7 +393,7 @@ static void entry_open_session(struct optee_msg_arg *arg, uint32_t num_params)
 				     &session_pnum);
 
 cleanup_shm_refs:
-	cleanup_shm_refs(saved_attr, &param, num_params - num_meta);
+	cleanup_shm_refs(saved_attr, &param, num_sess_params);
 
 out:
 	if (s)
@@ -427,14 +434,19 @@ static void entry_invoke_command(struct optee_msg_arg *arg, uint32_t num_params)
 
 	bm_timestamp();
 
+	if (num_params > TEE_NUM_PARAMS) {
+		res = TEE_ERROR_BAD_PARAMETERS;
+		goto out;
+	}
+
 	res = copy_in_params(arg->params, num_params, &param, saved_attr);
 	if (res != TEE_SUCCESS)
-		goto out;
+		goto cleanup_shm_refs;
 
 	s = tee_ta_get_session(arg->session, true, &tee_open_sessions);
 	if (!s) {
 		res = TEE_ERROR_BAD_PARAMETERS;
-		goto out;
+		goto cleanup_shm_refs;
 	}
 
 	res = tee_ta_invoke_command(&err_orig, s, NSAPP_IDENTITY,
@@ -446,9 +458,10 @@ static void entry_invoke_command(struct optee_msg_arg *arg, uint32_t num_params)
 
 	copy_out_param(&param, num_params, arg->params, saved_attr);
 
-out:
+cleanup_shm_refs:
 	cleanup_shm_refs(saved_attr, &param, num_params);
 
+out:
 	arg->ret = res;
 	arg->ret_origin = err_orig;
 }
@@ -526,7 +539,7 @@ void nsec_sessions_list_head(struct tee_ta_session_head **open_sessions)
 }
 
 /* Note: this function is weak to let platforms add special handling */
-TEE_Result __weak tee_entry_std(struct optee_msg_arg *arg, uint32_t num_params)
+uint32_t __weak tee_entry_std(struct optee_msg_arg *arg, uint32_t num_params)
 {
 	return __tee_entry_std(arg, num_params);
 }
@@ -535,9 +548,9 @@ TEE_Result __weak tee_entry_std(struct optee_msg_arg *arg, uint32_t num_params)
  * If tee_entry_std() is overridden, it's still supposed to call this
  * function.
  */
-TEE_Result __tee_entry_std(struct optee_msg_arg *arg, uint32_t num_params)
+uint32_t __tee_entry_std(struct optee_msg_arg *arg, uint32_t num_params)
 {
-	TEE_Result res = TEE_SUCCESS;
+	uint32_t rv = OPTEE_SMC_RETURN_OK;
 
 	/* Enable foreign interrupts for STD calls */
 	thread_set_foreign_intr(true);
@@ -581,10 +594,10 @@ TEE_Result __tee_entry_std(struct optee_msg_arg *arg, uint32_t num_params)
 	default:
 err:
 		EMSG("Unknown cmd 0x%x", arg->cmd);
-		res = TEE_ERROR_NOT_IMPLEMENTED;
+		rv = OPTEE_SMC_RETURN_EBADCMD;
 	}
 
-	return res;
+	return rv;
 }
 
 static TEE_Result default_mobj_init(void)

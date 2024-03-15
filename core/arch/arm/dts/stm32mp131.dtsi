@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause)
 /*
- * Copyright (C) STMicroelectronics 2021-2022 - All Rights Reserved
+ * Copyright (C) STMicroelectronics 2021 - All Rights Reserved
  * Author: Alexandre Torgue <alexandre.torgue@foss.st.com> for STMicroelectronics.
  */
 
-#include <dt-bindings/clock/stm32mp13-clks.h>
-#include <dt-bindings/clock/stm32mp13-clksrc.h>
-#include <dt-bindings/gpio/stm32mp_gpio.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
-#include <dt-bindings/regulator/st,stm32mp13-regulator.h>
+#include <dt-bindings/clock/stm32mp13-clks.h>
 #include <dt-bindings/reset/stm32mp13-resets.h>
 
 / {
@@ -33,12 +30,6 @@
 
 	cpu0_opp_table: cpu0-opp-table {
 		compatible = "operating-points-v2";
-	};
-
-	hse_monitor: hse-monitor {
-		compatible = "st,freq-monitor";
-		counter = <&lptimer3 1 1 0 0>;
-		status = "disabled";
 	};
 
 	intc: interrupt-controller@a0021000 {
@@ -90,7 +81,29 @@
 			compatible = "fixed-clock";
 			clock-frequency = <19000000>;
 		};
+	};
 
+	scmi_regu: scmi-regu {
+		compatible = "st,scmi-regulator-consumer";
+		scmi-channel-id = <0>;
+
+		scmi_reg11: voltd-reg11 {
+			voltd-name = "reg11";
+		};
+
+		scmi_reg18: voltd-reg18 {
+			voltd-name = "reg18";
+		};
+
+		scmi_usb33: voltd-usb33 {
+			voltd-name = "usb33";
+		};
+	};
+
+	hse_monitor: hse-monitor {
+		compatible = "st,freq-monitor";
+		counter = <&lptimer3 1 1 0 0>;
+		status = "disabled";
 	};
 
 	osc_calibration: osc-calibration {
@@ -106,29 +119,6 @@
 			compatible = "st,hsi-cal";
 			counter = <&timers12 0 1>;
 			status = "disabled";
-		};
-	};
-
-	scmi_regu: scmi-regu {
-		compatible = "st,scmi-regulator-consumer";
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		scmi-channel-id = <0>;
-
-		scmi_reg11: voltd-reg11 {
-			reg = <VOLTD_SCMI_REG11>;
-			voltd-supply = <&reg11>;
-		};
-
-		scmi_reg18: voltd-reg18 {
-			reg = <VOLTD_SCMI_REG18>;
-			voltd-supply = <&reg18>;
-		};
-
-		scmi_usb33: voltd-usb33 {
-			reg = <VOLTD_SCMI_USB33>;
-			voltd-supply = <&usb33>;
 		};
 	};
 
@@ -236,62 +226,17 @@
 		};
 
 		exti: interrupt-controller@5000d000 {
-			compatible = "st,stm32mp1-exti", "syscon";
+			compatible = "st,stm32mp13-exti", "syscon";
 			interrupt-controller;
 			#interrupt-cells = <2>;
-			#address-cells = <0>;
 			reg = <0x5000d000 0x400>;
-
-			exti-interrupt-map {
-				#address-cells = <0>;
-				#interrupt-cells = <2>;
-				interrupt-map-mask = <0xffffffff 0>;
-				interrupt-map =
-					<0  0 &intc GIC_SPI 6   IRQ_TYPE_LEVEL_HIGH>,
-					<1  0 &intc GIC_SPI 7   IRQ_TYPE_LEVEL_HIGH>,
-					<2  0 &intc GIC_SPI 8   IRQ_TYPE_LEVEL_HIGH>,
-					<3  0 &intc GIC_SPI 9   IRQ_TYPE_LEVEL_HIGH>,
-					<4  0 &intc GIC_SPI 10  IRQ_TYPE_LEVEL_HIGH>,
-					<5  0 &intc GIC_SPI 24  IRQ_TYPE_LEVEL_HIGH>,
-					<6  0 &intc GIC_SPI 65  IRQ_TYPE_LEVEL_HIGH>,
-					<7  0 &intc GIC_SPI 66  IRQ_TYPE_LEVEL_HIGH>,
-					<8  0 &intc GIC_SPI 67  IRQ_TYPE_LEVEL_HIGH>,
-					<9  0 &intc GIC_SPI 68  IRQ_TYPE_LEVEL_HIGH>,
-					<10 0 &intc GIC_SPI 41  IRQ_TYPE_LEVEL_HIGH>,
-					<11 0 &intc GIC_SPI 43  IRQ_TYPE_LEVEL_HIGH>,
-					<12 0 &intc GIC_SPI 77  IRQ_TYPE_LEVEL_HIGH>,
-					<13 0 &intc GIC_SPI 78  IRQ_TYPE_LEVEL_HIGH>,
-					<14 0 &intc GIC_SPI 106 IRQ_TYPE_LEVEL_HIGH>,
-					<15 0 &intc GIC_SPI 109 IRQ_TYPE_LEVEL_HIGH>,
-					<16 0 &intc GIC_SPI 1   IRQ_TYPE_LEVEL_HIGH>,
-					<19 0 &intc GIC_SPI 3   IRQ_TYPE_LEVEL_HIGH>,
-					<21 0 &intc GIC_SPI 32  IRQ_TYPE_LEVEL_HIGH>,
-					<22 0 &intc GIC_SPI 34  IRQ_TYPE_LEVEL_HIGH>,
-					<23 0 &intc GIC_SPI 73  IRQ_TYPE_LEVEL_HIGH>,
-					<24 0 &intc GIC_SPI 93  IRQ_TYPE_LEVEL_HIGH>,
-					<25 0 &intc GIC_SPI 114 IRQ_TYPE_LEVEL_HIGH>,
-					<26 0 &intc GIC_SPI 38  IRQ_TYPE_LEVEL_HIGH>,
-					<27 0 &intc GIC_SPI 39  IRQ_TYPE_LEVEL_HIGH>,
-					<28 0 &intc GIC_SPI 40  IRQ_TYPE_LEVEL_HIGH>,
-					<29 0 &intc GIC_SPI 72  IRQ_TYPE_LEVEL_HIGH>,
-					<30 0 &intc GIC_SPI 53  IRQ_TYPE_LEVEL_HIGH>,
-					<31 0 &intc GIC_SPI 54  IRQ_TYPE_LEVEL_HIGH>,
-					<32 0 &intc GIC_SPI 83  IRQ_TYPE_LEVEL_HIGH>,
-					<33 0 &intc GIC_SPI 84  IRQ_TYPE_LEVEL_HIGH>,
-					<44 0 &intc GIC_SPI 96  IRQ_TYPE_LEVEL_HIGH>,
-					<47 0 &intc GIC_SPI 92  IRQ_TYPE_LEVEL_HIGH>,
-					<48 0 &intc GIC_SPI 116 IRQ_TYPE_LEVEL_HIGH>,
-					<50 0 &intc GIC_SPI 117 IRQ_TYPE_LEVEL_HIGH>,
-					<52 0 &intc GIC_SPI 118 IRQ_TYPE_LEVEL_HIGH>,
-					<53 0 &intc GIC_SPI 119 IRQ_TYPE_LEVEL_HIGH>,
-					<68 0 &intc GIC_SPI 63  IRQ_TYPE_LEVEL_HIGH>,
-					<70 0 &intc GIC_SPI 98  IRQ_TYPE_LEVEL_HIGH>;
-			};
 		};
+
 
 		syscfg: syscon@50020000 {
 			compatible = "st,stm32mp157-syscfg", "syscon";
 			reg = <0x50020000 0x400>;
+			clocks = <&rcc SYSCFG>;
 		};
 
 		iwdg2: watchdog@5a002000 {
@@ -315,6 +260,7 @@
 		bsec: efuse@5c005000 {
 			compatible = "st,stm32mp13-bsec";
 			reg = <0x5c005000 0x400>;
+			clocks = <&rcc BSEC>;
 			#address-cells = <1>;
 			#size-cells = <1>;
 
@@ -323,7 +269,6 @@
 			};
 			part_number_otp: part_number_otp@4 {
 				reg = <0x4 0x2>;
-				bits = <0 12>;
 			};
 			monotonic_otp: monotonic_otp@10 {
 				reg = <0x10 0x4>;
@@ -350,6 +295,14 @@
 				reg = <0xe4 0xc>;
 				st,non-secure-otp;
 			};
+			/*
+			 * Not defined in secure context, alignment issue
+			 * Adding mac2 size in mac1 reg
+			 *
+			ethernet_mac2_address: mac2@ea {
+				reg = <0xea 0x8>;
+			};
+			*/
 			oem_enc_key: oem_enc_key@170 {
 				reg = <0x170 0x10>;
 			};
@@ -359,7 +312,6 @@
 			compatible = "st,stm32mp1-tzc";
 			reg = <0x5c006000 0x1000>;
 			interrupts = <GIC_SPI 4 IRQ_TYPE_LEVEL_HIGH>;
-			st,mem-map = <0xc0000000 0x40000000>;
 			clocks = <&rcc TZC>;
 		};
 
@@ -384,8 +336,8 @@
 				#gpio-cells = <2>;
 				interrupt-controller;
 				#interrupt-cells = <2>;
-				clocks = <&rcc GPIOA>;
 				reg = <0x0 0x400>;
+				clocks = <&rcc GPIOA>;
 				st,bank-name = "GPIOA";
 				ngpios = <16>;
 				gpio-ranges = <&pinctrl 0 0 16>;
@@ -396,8 +348,8 @@
 				#gpio-cells = <2>;
 				interrupt-controller;
 				#interrupt-cells = <2>;
-				clocks = <&rcc GPIOB>;
 				reg = <0x1000 0x400>;
+				clocks = <&rcc GPIOB>;
 				st,bank-name = "GPIOB";
 				ngpios = <16>;
 				gpio-ranges = <&pinctrl 0 16 16>;
@@ -408,8 +360,8 @@
 				#gpio-cells = <2>;
 				interrupt-controller;
 				#interrupt-cells = <2>;
-				clocks = <&rcc GPIOC>;
 				reg = <0x2000 0x400>;
+				clocks = <&rcc GPIOC>;
 				st,bank-name = "GPIOC";
 				ngpios = <16>;
 				gpio-ranges = <&pinctrl 0 32 16>;
@@ -420,8 +372,8 @@
 				#gpio-cells = <2>;
 				interrupt-controller;
 				#interrupt-cells = <2>;
-				clocks = <&rcc GPIOD>;
 				reg = <0x3000 0x400>;
+				clocks = <&rcc GPIOD>;
 				st,bank-name = "GPIOD";
 				ngpios = <16>;
 				gpio-ranges = <&pinctrl 0 48 16>;
@@ -432,8 +384,8 @@
 				#gpio-cells = <2>;
 				interrupt-controller;
 				#interrupt-cells = <2>;
-				clocks = <&rcc GPIOE>;
 				reg = <0x4000 0x400>;
+				clocks = <&rcc GPIOE>;
 				st,bank-name = "GPIOE";
 				ngpios = <16>;
 				gpio-ranges = <&pinctrl 0 64 16>;
@@ -444,8 +396,8 @@
 				#gpio-cells = <2>;
 				interrupt-controller;
 				#interrupt-cells = <2>;
-				clocks = <&rcc GPIOF>;
 				reg = <0x5000 0x400>;
+				clocks = <&rcc GPIOF>;
 				st,bank-name = "GPIOF";
 				ngpios = <16>;
 				gpio-ranges = <&pinctrl 0 80 16>;
@@ -456,8 +408,8 @@
 				#gpio-cells = <2>;
 				interrupt-controller;
 				#interrupt-cells = <2>;
-				clocks = <&rcc GPIOG>;
 				reg = <0x6000 0x400>;
+				clocks = <&rcc GPIOG>;
 				st,bank-name = "GPIOG";
 				ngpios = <16>;
 				gpio-ranges = <&pinctrl 0 96 16>;
@@ -468,8 +420,8 @@
 				#gpio-cells = <2>;
 				interrupt-controller;
 				#interrupt-cells = <2>;
-				clocks = <&rcc GPIOH>;
 				reg = <0x7000 0x400>;
+				clocks = <&rcc GPIOH>;
 				st,bank-name = "GPIOH";
 				ngpios = <15>;
 				gpio-ranges = <&pinctrl 0 112 15>;
@@ -480,8 +432,8 @@
 				#gpio-cells = <2>;
 				interrupt-controller;
 				#interrupt-cells = <2>;
-				clocks = <&rcc GPIOI>;
 				reg = <0x8000 0x400>;
+				clocks = <&rcc GPIOI>;
 				st,bank-name = "GPIOI";
 				ngpios = <8>;
 				gpio-ranges = <&pinctrl 0 128 8>;
@@ -705,7 +657,6 @@
 			hash: hash@54003000 {
 				compatible = "st,stm32mp13-hash";
 				reg = <0x54003000 0x400>;
-				interrupts = <GIC_SPI 81 IRQ_TYPE_LEVEL_HIGH>;
 				clocks = <&rcc HASH1>;
 				resets = <&rcc HASH1_R>;
 				status = "disabled";

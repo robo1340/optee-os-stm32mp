@@ -551,7 +551,9 @@
 #ifndef __ASSEMBLER__
 #include <io.h>
 #include <stdbool.h>
-#include <stm32_util.h>
+#include <types_ext.h>
+
+vaddr_t stm32_rcc_base(void);
 
 static inline bool stm32_rcc_is_secure(void)
 {
@@ -563,12 +565,5 @@ static inline bool stm32_rcc_is_mckprot(void)
 	return io_read32(stm32_rcc_base() + RCC_TZCR) & RCC_TZCR_MCKPROT;
 }
 #endif /*__ASSEMBLER__*/
-
-
-/* Global Reset Register */
-#define RCC_MP_GRSTCSETR_MPSYSRST	BIT(0)
-#define RCC_MP_GRSTCSETR_MCURST		BIT(1)
-#define RCC_MP_GRSTCSETR_MPUP0RST	BIT(4)
-#define RCC_MP_GRSTCSETR_MPUP1RST	BIT(5)
 
 #endif /*__DRIVERS_STM32MP1_RCC_H__*/

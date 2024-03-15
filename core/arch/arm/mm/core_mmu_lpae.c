@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: (BSD-2-Clause AND BSD-3-Clause)
 /*
- * Copyright (c) 2015-2016, 2022 Linaro Limited
+ * Copyright (c) 2015-2016, Linaro Limited
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,7 +27,7 @@
  */
 
 /*
- * Copyright (c) 2014, 2022, ARM Limited and Contributors. All rights reserved.
+ * Copyright (c) 2014, ARM Limited and Contributors. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -69,13 +69,15 @@
 #include <kernel/panic.h>
 #include <kernel/thread.h>
 #include <kernel/tlb_helpers.h>
-#include <memtag.h>
+#include <mm/core_memprot.h>
 #include <mm/core_memprot.h>
 #include <mm/pgt_cache.h>
 #include <string.h>
 #include <trace.h>
 #include <types_ext.h>
 #include <util.h>
+
+#include "core_mmu_private.h"
 
 #ifndef DEBUG_XLAT_TABLE
 #define DEBUG_XLAT_TABLE 0
@@ -118,17 +120,12 @@
 #define LOWER_ATTRS_SHIFT		2
 #define LOWER_ATTRS(x)			(((x) & 0xfff) << LOWER_ATTRS_SHIFT)
 
-#define ATTR_DEVICE_nGnRE_INDEX		0x0
+#define ATTR_DEVICE_INDEX		0x0
 #define ATTR_IWBWA_OWBWA_NTR_INDEX	0x1
-#define ATTR_DEVICE_nGnRnE_INDEX	0x2
-#define ATTR_TAGGED_NORMAL_MEM_INDEX	0x3
 #define ATTR_INDEX_MASK			0x7
 
-#define ATTR_DEVICE_nGnRnE		(0x0)
-#define ATTR_DEVICE_nGnRE		(0x4)
+#define ATTR_DEVICE			(0x4)
 #define ATTR_IWBWA_OWBWA_NTR		(0xff)
-/* Same as ATTR_IWBWA_OWBWA_NTR but with memory tagging.  */
-#define ATTR_TAGGED_NORMAL_MEM		(0xf0)
 
 #define MAIR_ATTR_SET(attr, index)	(((uint64_t)attr) << ((index) << 3))
 
@@ -334,16 +331,12 @@ static uint32_t desc_to_mattr(unsigned level, uint64_t desc)
 	if (desc & UPPER_ATTRS(PXN))
 		a &= ~TEE_MATTR_PX;
 
-	COMPILE_TIME_ASSERT(ATTR_DEVICE_nGnRnE_INDEX ==
-			    TEE_MATTR_MEM_TYPE_STRONGLY_O);
-	COMPILE_TIME_ASSERT(ATTR_DEVICE_nGnRE_INDEX == TEE_MATTR_MEM_TYPE_DEV);
+	COMPILE_TIME_ASSERT(ATTR_DEVICE_INDEX == TEE_MATTR_CACHE_NONCACHE);
 	COMPILE_TIME_ASSERT(ATTR_IWBWA_OWBWA_NTR_INDEX ==
-			    TEE_MATTR_MEM_TYPE_CACHED);
-	COMPILE_TIME_ASSERT(ATTR_TAGGED_NORMAL_MEM_INDEX ==
-			    TEE_MATTR_MEM_TYPE_TAGGED);
+			    TEE_MATTR_CACHE_CACHED);
 
 	a |= ((desc & LOWER_ATTRS(ATTR_INDEX_MASK)) >> LOWER_ATTRS_SHIFT) <<
-	     TEE_MATTR_MEM_TYPE_SHIFT;
+	     TEE_MATTR_CACHE_SHIFT;
 
 	if (!(desc & LOWER_ATTRS(NON_GLOBAL)))
 		a |= TEE_MATTR_GLOBAL;
@@ -400,18 +393,12 @@ static uint64_t mattr_to_desc(unsigned level, uint32_t attr)
 		desc |= GP;
 
 	/* Keep in sync with core_mmu.c:core_mmu_mattr_is_ok */
-	switch ((a >> TEE_MATTR_MEM_TYPE_SHIFT) & TEE_MATTR_MEM_TYPE_MASK) {
-	case TEE_MATTR_MEM_TYPE_STRONGLY_O:
-		desc |= LOWER_ATTRS(ATTR_DEVICE_nGnRnE_INDEX | OSH);
+	switch ((a >> TEE_MATTR_CACHE_SHIFT) & TEE_MATTR_CACHE_MASK) {
+	case TEE_MATTR_CACHE_NONCACHE:
+		desc |= LOWER_ATTRS(ATTR_DEVICE_INDEX | OSH);
 		break;
-	case TEE_MATTR_MEM_TYPE_DEV:
-		desc |= LOWER_ATTRS(ATTR_DEVICE_nGnRE_INDEX | OSH);
-		break;
-	case TEE_MATTR_MEM_TYPE_CACHED:
+	case TEE_MATTR_CACHE_CACHED:
 		desc |= LOWER_ATTRS(ATTR_IWBWA_OWBWA_NTR_INDEX | ISH);
-		break;
-	case TEE_MATTR_MEM_TYPE_TAGGED:
-		desc |= LOWER_ATTRS(ATTR_TAGGED_NORMAL_MEM_INDEX | ISH);
 		break;
 	default:
 		/*
@@ -595,8 +582,6 @@ static bool core_mmu_entry_copy(struct core_mmu_table_info *tbl_info,
 
 	orig_table = core_mmu_xlat_table_entry_pa2va(prtn, tbl_info->level,
 						     *entry);
-	if (!orig_table)
-		return false;
 
 	/* Copy original table content to new table */
 	memcpy(new_table, orig_table, XLAT_TABLE_ENTRIES * XLAT_ENTRY_SIZE);
@@ -823,16 +808,13 @@ void core_init_mmu(struct tee_mmap_region *mm)
 	assert(max_va < BIT64(CFG_LPAE_ADDR_SPACE_BITS));
 }
 
-#ifdef CFG_WITH_PAGER
-/* Prefer to consume only 1 base xlat table for the whole mapping */
-bool core_mmu_prefer_tee_ram_at_top(paddr_t paddr)
+bool core_mmu_place_tee_ram_at_top(paddr_t paddr)
 {
 	size_t base_level_size = BASE_XLAT_BLOCK_SIZE;
 	paddr_t base_level_mask = base_level_size - 1;
 
 	return (paddr & base_level_mask) > (base_level_size / 2);
 }
-#endif
 
 #ifdef ARM32
 void core_init_mmu_regs(struct core_mmu_config *cfg)
@@ -843,15 +825,8 @@ void core_init_mmu_regs(struct core_mmu_config *cfg)
 	cfg->ttbr0_base = virt_to_phys(base_xlation_table[0][0]);
 	cfg->ttbr0_core_offset = sizeof(base_xlation_table[0][0]);
 
-	mair  = MAIR_ATTR_SET(ATTR_DEVICE_nGnRE, ATTR_DEVICE_nGnRE_INDEX);
+	mair  = MAIR_ATTR_SET(ATTR_DEVICE, ATTR_DEVICE_INDEX);
 	mair |= MAIR_ATTR_SET(ATTR_IWBWA_OWBWA_NTR, ATTR_IWBWA_OWBWA_NTR_INDEX);
-	mair |= MAIR_ATTR_SET(ATTR_DEVICE_nGnRnE, ATTR_DEVICE_nGnRnE_INDEX);
-	/*
-	 * Tagged memory isn't supported in 32-bit mode, map tagged memory
-	 * as normal memory instead.
-	 */
-	mair |= MAIR_ATTR_SET(ATTR_IWBWA_OWBWA_NTR,
-			      ATTR_TAGGED_NORMAL_MEM_INDEX);
 	cfg->mair0 = mair;
 
 	ttbcr = TTBCR_EAE;
@@ -911,19 +886,8 @@ void core_init_mmu_regs(struct core_mmu_config *cfg)
 	cfg->ttbr0_el1_base = virt_to_phys(base_xlation_table[0][0]);
 	cfg->ttbr0_core_offset = sizeof(base_xlation_table[0][0]);
 
-	mair  = MAIR_ATTR_SET(ATTR_DEVICE_nGnRE, ATTR_DEVICE_nGnRE_INDEX);
+	mair  = MAIR_ATTR_SET(ATTR_DEVICE, ATTR_DEVICE_INDEX);
 	mair |= MAIR_ATTR_SET(ATTR_IWBWA_OWBWA_NTR, ATTR_IWBWA_OWBWA_NTR_INDEX);
-	mair |= MAIR_ATTR_SET(ATTR_DEVICE_nGnRnE, ATTR_DEVICE_nGnRnE_INDEX);
-	/*
-	 * If MEMTAG isn't enabled, map tagged memory as normal memory
-	 * instead.
-	 */
-	if (memtag_is_enabled())
-		mair |= MAIR_ATTR_SET(ATTR_TAGGED_NORMAL_MEM,
-				      ATTR_TAGGED_NORMAL_MEM_INDEX);
-	else
-		mair |= MAIR_ATTR_SET(ATTR_IWBWA_OWBWA_NTR,
-				      ATTR_TAGGED_NORMAL_MEM_INDEX);
 	cfg->mair_el1 = mair;
 
 	tcr = TCR_RES1;
@@ -1342,8 +1306,6 @@ enum core_mmu_fault core_mmu_get_fault_type(uint32_t fault_descr)
 				return CORE_MMU_FAULT_READ_PERMISSION;
 		case ESR_FSC_ALIGN:
 			return CORE_MMU_FAULT_ALIGNMENT;
-		case ESR_FSC_TAG_CHECK:
-			return CORE_MMU_FAULT_TAG_CHECK;
 		default:
 			return CORE_MMU_FAULT_OTHER;
 		}

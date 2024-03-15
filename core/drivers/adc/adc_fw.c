@@ -237,7 +237,7 @@ TEE_Result adc_consumer_get_all(const void *fdt, int node, size_t *nb_cons,
 	}
 	*nb_cons = cnt;
 
-	c = calloc(cnt, sizeof(*c));
+	c = calloc(1, cnt * sizeof(*cons));
 	if (!c)
 		return TEE_ERROR_OUT_OF_MEMORY;
 	p = c;
@@ -248,8 +248,6 @@ TEE_Result adc_consumer_get_all(const void *fdt, int node, size_t *nb_cons,
 							 DT_DRIVER_ADC,
 							 &res);
 		if (res) {
-			free(p);
-
 			if (res != TEE_ERROR_DEFER_DRIVER_INIT)
 				EMSG("Failed to get ADC channel");
 			return res;

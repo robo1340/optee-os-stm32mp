@@ -4,6 +4,7 @@
  * Copyright (c) 2020, Arm Limited
  */
 
+#include <arm.h>
 #include <assert.h>
 #include <kernel/mutex.h>
 #include <kernel/panic.h>
@@ -309,6 +310,7 @@ static void destroy_context(struct tee_ta_ctx *ctx)
 	DMSG("Destroy TA ctx (0x%" PRIxVA ")",  (vaddr_t)ctx);
 
 	condvar_destroy(&ctx->busy_cv);
+	pgt_flush_ctx(&ctx->ts_ctx);
 	ctx->ts_ctx.ops->destroy(&ctx->ts_ctx);
 }
 
@@ -751,6 +753,10 @@ TEE_Result tee_ta_open_session(TEE_ErrorOrigin *err,
 	panicked = ctx->panicked;
 	s->param = NULL;
 
+	tee_ta_put_session(s);
+	if (panicked || (res != TEE_SUCCESS))
+		tee_ta_close_session(s, open_sessions, KERN_IDENTITY);
+
 	/*
 	 * Origin error equal to TEE_ORIGIN_TRUSTED_APP for "regular" error,
 	 * apart from panicking.
@@ -759,10 +765,6 @@ TEE_Result tee_ta_open_session(TEE_ErrorOrigin *err,
 		*err = TEE_ORIGIN_TEE;
 	else
 		*err = s->err_origin;
-
-	tee_ta_put_session(s);
-	if (panicked || res != TEE_SUCCESS)
-		tee_ta_close_session(s, open_sessions, KERN_IDENTITY);
 
 	if (res != TEE_SUCCESS)
 		EMSG("Failed. TA %pUl Return error 0x%x", uuid, res);

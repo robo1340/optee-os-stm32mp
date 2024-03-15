@@ -16,13 +16,8 @@
 #define GIC_LOWEST_NS_PRIORITY		0xfeU
 /* 0xff would disable all interrupts */
 
-#if defined(CFG_ARM_GICV3)
 #define GIC_DIST_REG_SIZE	0x10000
 #define GIC_CPU_REG_SIZE	0x10000
-#else
-#define GIC_DIST_REG_SIZE	0x1000
-#define GIC_CPU_REG_SIZE	0x1000
-#endif
 
 #define GIC_PPI_BASE		U(16)
 #define GIC_SPI_BASE		U(32)
@@ -57,10 +52,10 @@ struct gic_data {
  * then used by the other functions.
  */
 
-void gic_init(struct gic_data *gd, paddr_t gicc_base_pa, paddr_t gicd_base_pa);
+void gic_init(struct gic_data *gd, vaddr_t gicc_base, vaddr_t gicd_base);
 /* initial base address only */
-void gic_init_base_addr(struct gic_data *gd, paddr_t gicc_base_pa,
-			paddr_t gicd_base_pa);
+void gic_init_base_addr(struct gic_data *gd, vaddr_t gicc_base,
+			vaddr_t gicd_base);
 /* Setup GIC default configuration */
 void gic_init_setup(struct gic_data *gd);
 

@@ -14,11 +14,6 @@
 #include <sm/optee_smc.h>
 #include <types_ext.h>
 
-/* Async notif ID related to interrupt event trigged in non-secure world */
-#define NOTIF_VALUE_DO_IT		1
-
-static_assert(NOTIF_VALUE_DO_IT == OPTEE_SMC_ASYNC_NOTIF_VALUE_DO_IT);
-
 #if defined(CFG_CORE_ASYNC_NOTIF)
 static struct mutex notif_mutex = MUTEX_INITIALIZER;
 static unsigned int notif_lock = SPINLOCK_UNLOCK;
@@ -45,7 +40,6 @@ TEE_Result notif_alloc_async_value(uint32_t *val)
 
 	if (!alloc_values_inited) {
 		bit_set(notif_alloc_values, NOTIF_VALUE_DO_BOTTOM_HALF);
-		bit_set(notif_alloc_values, NOTIF_VALUE_DO_IT);
 		alloc_values_inited = true;
 	}
 
@@ -105,6 +99,9 @@ void notif_send_async(uint32_t value)
 {
 	uint32_t old_itr_status = 0;
 
+	COMPILE_TIME_ASSERT(NOTIF_VALUE_DO_BOTTOM_HALF ==
+			    OPTEE_SMC_ASYNC_NOTIF_VALUE_DO_BOTTOM_HALF);
+
 	assert(value <= NOTIF_ASYNC_VALUE_MAX);
 	old_itr_status = cpu_spin_lock_xsave(&notif_lock);
 
@@ -148,7 +145,7 @@ uint32_t it_set_mask(uint32_t it_number, bool masked)
 
 	old_itr_status = cpu_spin_lock_xsave(&it_lock);
 
-	DMSG("it_number=%"PRIu32" masked=%u", it_number, masked);
+	DMSG("it_number=%u masked=%u", it_number, masked);
 
 	if (it_number >= NOTIF_IT_VALUE_MAX)
 		goto out;
@@ -171,6 +168,9 @@ out:
 void notif_send_it(uint32_t it_number)
 {
 	uint32_t old_itr_status = 0;
+
+	COMPILE_TIME_ASSERT(NOTIF_VALUE_DO_IT ==
+			    OPTEE_SMC_ASYNC_NOTIF_VALUE_DO_IT);
 
 	assert(it_number <= NOTIF_IT_VALUE_MAX);
 	old_itr_status = cpu_spin_lock_xsave(&it_lock);

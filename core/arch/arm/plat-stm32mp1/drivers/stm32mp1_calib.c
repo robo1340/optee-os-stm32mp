@@ -16,16 +16,17 @@
 #endif
 #include <initcall.h>
 #include <io.h>
+#include <libfdt.h>
 #include <keep.h>
 #include <kernel/boot.h>
 #include <kernel/delay.h>
 #include <kernel/dt.h>
 #include <kernel/interrupt.h>
+#include <kernel/timer.h>
 #include <kernel/panic.h>
 #include <kernel/pm.h>
 #include <kernel/pseudo_ta.h>
 #include <kernel/timer.h>
-#include <libfdt.h>
 #include <limits.h>
 #include <mm/core_memprot.h>
 #include <stm32_pta_calib.h>
@@ -137,6 +138,7 @@ static unsigned int stm32mp1_clk_hsi_get_cal(void)
 	return (io_read32(stm32_rcc_base() + RCC_HSICFGR) &
 		RCC_HSICFGR_HSICAL_MASK_LIMITED) >> RCC_HSICFGR_HSICAL_SHIFT;
 }
+DECLARE_KEEP_PAGER(stm32mp1_clk_hsi_get_cal);
 
 static void stm32mp1_clk_hsi_set_trim(unsigned int cal, unsigned int cal_ref)
 {
@@ -150,12 +152,14 @@ static void stm32mp1_clk_hsi_set_trim(unsigned int cal, unsigned int cal_ref)
 	io_clrsetbits32(stm32_rcc_base() + RCC_HSICFGR,
 			RCC_HSICFGR_HSITRIM_MASK, trim);
 }
+DECLARE_KEEP_PAGER(stm32mp1_clk_hsi_set_trim);
 
 static unsigned int stm32mp1_clk_csi_get_cal(void)
 {
 	return (io_read32(stm32_rcc_base() + RCC_CSICFGR) &
 		RCC_CSICFGR_CSICAL_MASK) >> RCC_CSICFGR_CSICAL_SHIFT;
 }
+DECLARE_KEEP_PAGER(stm32mp1_clk_csi_get_cal);
 
 static void stm32mp1_clk_csi_set_trim(unsigned int cal, unsigned int cal_ref)
 {
@@ -168,6 +172,7 @@ static void stm32mp1_clk_csi_set_trim(unsigned int cal, unsigned int cal_ref)
 	io_clrsetbits32(stm32_rcc_base() + RCC_CSICFGR,
 			RCC_CSICFGR_CSITRIM_MASK, trim);
 }
+DECLARE_KEEP_PAGER(stm32mp1_clk_csi_set_trim);
 
 static unsigned long get_freq(struct stm32mp1_clk_cal *clk_cal)
 {
@@ -409,6 +414,12 @@ static void stm32mp_start_clock_calib(struct stm32mp1_osc_cal *calib)
 		}
 	}
 }
+
+static void stm32mp_alarm_calib(unsigned int ticks __maybe_unused, void *priv)
+{
+	stm32mp_start_clock_calib((struct stm32mp1_osc_cal *)priv);
+}
+DECLARE_KEEP_PAGER(stm32mp_alarm_calib);
 
 static void set_cal_counter(struct counter_calib *cnt_cal,
 			    const void *fdt, int node)

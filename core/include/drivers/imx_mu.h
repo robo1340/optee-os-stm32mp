@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
- * Copyright 2020-2022 NXP
+ * Copyright 2020-2021 NXP
  */
 #ifndef __DRIVERS_IMX_MU_H
 #define __DRIVERS_IMX_MU_H
@@ -9,60 +9,31 @@
 #include <types_ext.h>
 #include <util.h>
 
-#define IMX_MU_DATA_U32(mesg, idx) ((mesg)->data.u32[(idx)])
-#define IMX_MU_DATA_U16(mesg, idx) ((mesg)->data.u16[(idx)])
-#define IMX_MU_DATA_U8(mesg, idx)  ((mesg)->data.u8[(idx)])
-
-#define IMX_MU_MSG_SIZE	  7
-#define IMX_MU_NB_CHANNEL 4
-
-#if defined(CFG_MX8ULP)
-struct imx_mu_msg_header {
-	uint8_t version;
-	uint8_t size;
-	uint8_t command;
-	uint8_t tag;
-};
-#elif defined(CFG_MX8QM) || defined(CFG_MX8QX) || defined(CFG_MX8DXL)
-struct imx_mu_msg_header {
-	uint8_t version;
-	uint8_t size;
-	uint8_t tag;
-	uint8_t command;
-};
-#else
-#error "Platform not supported"
-#endif
+#define MU_NB_RR 4
+#define MU_NB_TR 4
 
 /*
- * i.MX MU message format
- * Note: the header format differs depending of the platform.
- */
-struct imx_mu_msg {
-	struct imx_mu_msg_header header;
-	union {
-		uint32_t u32[IMX_MU_MSG_SIZE];
-		uint16_t u16[IMX_MU_MSG_SIZE * 2];
-		uint8_t u8[IMX_MU_MSG_SIZE * 4];
-	} data;
-};
-
-/*
- * Initialize the MU interface
+ * Clear GIE, RIE, TIE, GIR and F registers
  *
- * @base: virtual base address of the MU controller
+ * @base   Base address of the MU
  */
-void imx_mu_init(vaddr_t base);
+void mu_init(vaddr_t base);
 
 /*
- * Initiate a communication with the external controller. It sends a message
- * and return the answer of the controller.
+ * Send a message through MU
  *
- * @base: virtual base address of the MU controller
- * @[in/out]msg: message sent and received
- * @wait_for_answer: true if an answer from the controller is expected, false
- * otherwise
+ * @base    Base address of the MU
+ * @index   Index of the TR register
+ * @msg     Message to send
  */
-TEE_Result imx_mu_call(vaddr_t base, struct imx_mu_msg *msg,
-		       bool wait_for_answer);
+TEE_Result mu_send_msg(vaddr_t base, unsigned int index, uint32_t msg);
+
+/*
+ * Receive a message through MU
+ *
+ * @base    Base address of the MU
+ * @index   Index of the RR register
+ * @msg     [out] Received message
+ */
+TEE_Result mu_receive_msg(vaddr_t base, unsigned int index, uint32_t *msg);
 #endif /* __DRIVERS_IMX_MU_H */

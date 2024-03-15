@@ -128,7 +128,17 @@ static inline void tzpc_init(void)
 #ifndef CFG_WITH_ARM_TRUSTED_FW
 void main_init_gic(void)
 {
-	gic_init(&gic_data, GIC_BASE + GICC_OFFSET, GIC_BASE + GICD_OFFSET);
+	vaddr_t gicc_base;
+	vaddr_t gicd_base;
+
+	gicc_base = core_mmu_get_va(GIC_BASE + GICC_OFFSET, MEM_AREA_IO_SEC, 1);
+	gicd_base = core_mmu_get_va(GIC_BASE + GICD_OFFSET, MEM_AREA_IO_SEC, 1);
+
+	if (!gicc_base || !gicd_base)
+		panic();
+
+	/* Initialize GIC */
+	gic_init(&gic_data, gicc_base, gicd_base);
 	itr_init(&gic_data.chip);
 }
 

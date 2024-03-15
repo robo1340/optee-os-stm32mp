@@ -6,7 +6,6 @@
 
 #include <config.h>
 #include <initcall.h>
-#include <kernel/panic.h>
 #include <se050.h>
 
 sss_se05x_key_store_t *se050_kstore;
@@ -69,27 +68,17 @@ static TEE_Result se050_early_init(void)
 	TEE_Result ret = TEE_SUCCESS;
 
 	ret = se050_core_early_init(NULL);
-	if (ret) {
-		EMSG("Failed to open the default session");
-		goto out;
-	}
+	if (ret)
+		return ret;
 
 	ret = update_se_info();
-	if (ret) {
-		EMSG("Failed to read the secure element configuration");
-		goto out;
-	}
-
-	if (IS_ENABLED(CFG_CORE_SE05X_SCP03_EARLY)) {
-		ret = enable_scp03();
-		if (ret)
-			EMSG("Failed to open the SCP03 session");
-	}
-out:
 	if (ret)
-		panic();
+		return ret;
 
-	return ret;
+	if (IS_ENABLED(CFG_CORE_SE05X_SCP03_EARLY))
+		return enable_scp03();
+
+	return TEE_SUCCESS;
 }
 
 driver_init(se050_early_init);

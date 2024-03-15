@@ -21,8 +21,6 @@ srcs :=
 gen-srcs :=
 asm-defines-files :=
 
-uniq = $(if $1,$(firstword $1) $(call uniq,$(filter-out $(firstword $1),$1)))
-
 define process-subdir-srcs-y
 ifeq ($$(sub-dir),.)
 srcs 				+= $1
@@ -176,8 +174,8 @@ this-out-dir :=
 asm-defines-y :=
 
 # Process subdirectories in current directory
-$$(foreach sd, $$(call uniq,$$(sub-subdirs)), $$(eval $$(call process-subdir,$$(sd))))
+$$(foreach sd, $$(sub-subdirs), $$(eval $$(call process-subdir,$$(sd))))
 endef #process-subdir
 
 # Top subdirectories
-$(foreach sd, $(call uniq,$(subdirs)), $(eval $(call process-subdir,$(sd))))
+$(foreach sd, $(subdirs), $(eval $(call process-subdir,$(sd))))

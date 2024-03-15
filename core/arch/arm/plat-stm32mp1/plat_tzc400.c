@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 /*
- * Copyright (c) 2019-2020, STMicroelectronics
+ * Copyright (c) 2019-2021, STMicroelectronics
  */
 
 #include <assert.h>
@@ -59,13 +59,6 @@ struct tzc_device {
 #define IS_PAGE_ALIGNED(addr)		(((addr) & SMALL_PAGE_MASK) == 0)
 #define filter_mask(_width)		GENMASK_32(((_width) - 1U), 0U)
 
-/*
- * At TZC driver initialization, there are memory regions defined in the DT
- * with TZC configuration information. TZC is first configured for each of
- * these regions and each is carved out from the overall memory address range
- * controlled by TZC. This results in a series a memory regions that, by
- * construction, are assigned to non-secure world.
- */
 struct tzc_region_non_sec {
 	struct tzc_region_config region;
 	SLIST_ENTRY(tzc_region_non_sec) link;
@@ -78,18 +71,15 @@ static enum itr_return tzc_it_handler(struct itr_handler *handler __unused)
 {
 	EMSG("TZC permission failure");
 	tzc_fail_dump();
+	stm32mp_dump_core_registers(true);
 
-	if (IS_ENABLED(CFG_STM32MP_PANIC_ON_TZC_PERM_VIOLATION)) {
-		stm32mp_dump_core_registers(true);
+	if (IS_ENABLED(CFG_STM32MP_PANIC_ON_TZC_PERM_VIOLATION))
 		panic();
-	} else {
-		stm32mp_dump_core_registers(false);
+	else
 		tzc_int_clear();
-	}
 
 	return ITRR_HANDLED;
 }
-DECLARE_KEEP_PAGER(tzc_it_handler);
 
 static TEE_Result tzc_region_check_overlap(struct tzc_device *tzc_dev,
 					   const struct tzc_region_config *reg)
@@ -121,7 +111,7 @@ static void tzc_set_driverdata(struct tzc_device *tzc_dev)
 
 	clk_disable(tzc_dev->pdata.clk[0]);
 
-	DMSG("TZC400 Filters %"PRIu32" Regions %"PRIu32, ddata->nb_filters,
+	DMSG("TZC400 Filters %i Regions %i\n", ddata->nb_filters,
 	     ddata->nb_regions);
 }
 
@@ -230,7 +220,7 @@ exclude_region_from_nsec(const struct tzc_region_config *reg_exclude)
 			break;
 	}
 
-	if (!found || !reg)
+	if (!found)
 		panic();
 
 	if (reg_exclude->base == reg->region.base &&
@@ -307,10 +297,11 @@ static void stm32mp_tzc_cfg_boot_region(struct tzc_device *tzc_dev)
 	stm32mp_tzc_region0(false);
 }
 
-static TEE_Result add_node_memory_regions(struct tzc_device *tzc_dev,
-					  const void *fdt, int node)
+static TEE_Result fdt_stm32mp_tzc_add_regions(struct tzc_device *tzc_dev,
+					      const void *fdt, int node)
 {
 	const fdt32_t *conf_list = NULL;
+	TEE_Result res = TEE_SUCCESS;
 	unsigned int nregions = 0;
 	unsigned int i = 0;
 	int len = 0;
@@ -326,8 +317,6 @@ static TEE_Result add_node_memory_regions(struct tzc_device *tzc_dev,
 	for (i = 0; i < nregions; i++) {
 		struct tzc_region_config region_cfg = { };
 		int pnode = 0;
-		size_t region_size = 0;
-		paddr_t region_base = 0;
 		const fdt32_t *prop = NULL;
 		uint32_t phandle = fdt32_to_cpu(*(conf_list + i));
 
@@ -335,16 +324,16 @@ static TEE_Result add_node_memory_regions(struct tzc_device *tzc_dev,
 		if (pnode < 0)
 			return TEE_ERROR_BAD_PARAMETERS;
 
-		region_base = _fdt_reg_base_address(fdt, pnode);
-		region_size = _fdt_reg_size(fdt, pnode);
-		assert(region_base != (paddr_t)-1 && region_size != (size_t)-1);
-
-		if (!IS_PAGE_ALIGNED(region_base) ||
-		    !IS_PAGE_ALIGNED(region_size))
+		prop = fdt_getprop(fdt, pnode, "reg", NULL);
+		if (!prop)
 			return TEE_ERROR_BAD_PARAMETERS;
 
-		region_cfg.base = region_base;
-		region_cfg.top = region_base + region_size - 1;
+		if (!IS_PAGE_ALIGNED(fdt32_to_cpu(prop[0])) ||
+		    !IS_PAGE_ALIGNED(fdt32_to_cpu(prop[1])))
+			return TEE_ERROR_BAD_PARAMETERS;
+
+		region_cfg.base = fdt32_to_cpu(prop[0]);
+		region_cfg.top = region_cfg.base + (fdt32_to_cpu(prop[1]) - 1);
 		region_cfg.filters = filter_mask(tzc_dev->ddata->nb_filters);
 
 		prop = fdt_getprop(fdt, pnode, "st,protreg", &len);
@@ -354,43 +343,20 @@ static TEE_Result add_node_memory_regions(struct tzc_device *tzc_dev,
 		region_cfg.sec_attr = fdt32_to_cpu(prop[0]);
 		region_cfg.ns_device_access = fdt32_to_cpu(prop[1]);
 
-		DMSG("%#08"PRIxVA" - %#08"PRIxVA" : Sec access %i NS access %#"PRIx32,
+		DMSG("0x%#08"PRIxVA" - 0x%#08"PRIxVA" : Sec access %i NS access %#"PRIx32,
 		     region_cfg.base, region_cfg.top, region_cfg.sec_attr,
 		     region_cfg.ns_device_access);
 
-		if (stm32mp_tzc_region_append(tzc_dev, &region_cfg))
+		res = stm32mp_tzc_region_append(tzc_dev, &region_cfg);
+		if (res)
 			panic("Error adding region");
 
-		if (exclude_region_from_nsec(&region_cfg))
+		res = exclude_region_from_nsec(&region_cfg);
+		if (res)
 			panic("Not able to exclude region");
 	}
 
-	return TEE_SUCCESS;
-}
-
-/*
- * Adds a TZC region entry for each non-secure memory area defined by
- * nsec_region_list. The function releases resources used to build this
- * non-secure region list.
- */
-static void add_carved_out_nsec(struct tzc_device *tzc_dev)
-{
-	struct tzc_region_non_sec *region = NULL;
-	struct tzc_region_non_sec *region_safe = NULL;
-
-	SLIST_FOREACH_SAFE(region, &nsec_region_list, link, region_safe) {
-		DMSG("%#08"PRIxVA" - %#08"PRIxVA" : Sec access %i NS access %#"PRIx32,
-		     region->region.base, region->region.top,
-		     region->region.sec_attr,
-		     region->region.ns_device_access);
-
-		if (stm32mp_tzc_region_append(tzc_dev, &region->region))
-			panic("Error adding region");
-
-		SLIST_REMOVE(&nsec_region_list, region,
-			     tzc_region_non_sec, link);
-		free(region);
-	};
+	return 0;
 }
 
 static TEE_Result stm32mp_tzc_parse_fdt(struct tzc_device *tzc_dev,
@@ -399,6 +365,7 @@ static TEE_Result stm32mp_tzc_parse_fdt(struct tzc_device *tzc_dev,
 	TEE_Result res = TEE_ERROR_GENERIC;
 	struct dt_node_info dt_info = { };
 	struct io_pa_va base = { };
+	const fdt32_t *cuint = NULL;
 	int offs = 0;
 
 	_fdt_fill_device_info(fdt, &dt_info, node);
@@ -428,11 +395,12 @@ static TEE_Result stm32mp_tzc_parse_fdt(struct tzc_device *tzc_dev,
 	if (offs < 0)
 		panic("No memory reference for TZC DT node");
 
-	tzc_dev->pdata.mem_base = _fdt_reg_base_address(fdt, offs);
-	tzc_dev->pdata.mem_size = _fdt_reg_size(fdt, offs);
+	cuint = fdt_getprop(fdt, offs, "reg", NULL);
+	if (!cuint)
+		panic();
 
-	assert(tzc_dev->pdata.mem_base != DT_INFO_INVALID_REG &&
-	       tzc_dev->pdata.mem_size != DT_INFO_INVALID_REG_SIZE);
+	tzc_dev->pdata.mem_base = fdt32_to_cpu(*cuint);
+	tzc_dev->pdata.mem_size = fdt32_to_cpu(*(cuint + 1));
 
 	return TEE_SUCCESS;
 }
@@ -464,22 +432,27 @@ static TEE_Result stm32mp1_tzc_probe(const void *fdt, int node,
 	TEE_Result res = TEE_ERROR_GENERIC;
 	struct tzc_device *tzc_dev = NULL;
 	struct tzc_region_non_sec *nsec_region = NULL;
+	struct tzc_region_non_sec *region_safe = NULL;
+
+	assert(fdt && node >= 0);
 
 	tzc_dev = tzc_alloc();
 	if (!tzc_dev)
-		panic();
+		return TEE_ERROR_OUT_OF_MEMORY;
 
 	res = stm32mp_tzc_parse_fdt(tzc_dev, fdt, node);
-	if (res) {
-		tzc_free(tzc_dev);
-		return res;
-	}
+	if (res)
+		goto err;
 
-	tzc_set_driverdata(tzc_dev);
-	tzc_dev->reg = calloc(tzc_dev->ddata->nb_regions,
+	if (tzc_dev->ddata) {
+		tzc_set_driverdata(tzc_dev);
+		tzc_dev->reg = calloc(tzc_dev->ddata->nb_regions,
 			      sizeof(*tzc_dev->reg));
-	if (!tzc_dev->reg)
-		panic();
+		if (!tzc_dev->reg) {
+			res = TEE_ERROR_OUT_OF_MEMORY;
+			goto err;
+		}
+	}
 
 	clk_enable(tzc_dev->pdata.clk[0]);
 	if (tzc_dev->pdata.clk[1])
@@ -488,12 +461,14 @@ static TEE_Result stm32mp1_tzc_probe(const void *fdt, int node,
 	tzc_init((vaddr_t)tzc_dev->pdata.base);
 
 	nsec_region = calloc(1, sizeof(*nsec_region));
-	if (!nsec_region)
-		panic();
+	if (!nsec_region) {
+		res = TEE_ERROR_OUT_OF_MEMORY;
+		goto err;
+	}
 
 	nsec_region->region.base = tzc_dev->pdata.mem_base;
 	nsec_region->region.top = tzc_dev->pdata.mem_base +
-				  tzc_dev->pdata.mem_size - 1;
+		tzc_dev->pdata.mem_size - 1;
 	nsec_region->region.sec_attr = TZC_REGION_S_NONE;
 	nsec_region->region.ns_device_access = TZC_REGION_NSEC_ALL_ACCESS_RDWR;
 	nsec_region->region.filters = filter_mask(tzc_dev->ddata->nb_filters);
@@ -502,13 +477,24 @@ static TEE_Result stm32mp1_tzc_probe(const void *fdt, int node,
 
 	stm32mp_tzc_cfg_boot_region(tzc_dev);
 
-	res = add_node_memory_regions(tzc_dev, fdt, node);
-	if (res) {
-		EMSG("Can't add memory regions: %"PRIx32, res);
-		panic();
-	}
+	res = fdt_stm32mp_tzc_add_regions(tzc_dev, fdt, node);
+	if (res)
+		goto err;
 
-	add_carved_out_nsec(tzc_dev);
+	SLIST_FOREACH_SAFE(nsec_region, &nsec_region_list, link, region_safe) {
+		DMSG("0x%#08"PRIxVA" - 0x%#08"PRIxVA" : Sec access %i NS access %#"PRIx32,
+		     nsec_region->region.base, nsec_region->region.top,
+		     nsec_region->region.sec_attr,
+		     nsec_region->region.ns_device_access);
+
+		res = stm32mp_tzc_region_append(tzc_dev, &nsec_region->region);
+		if (res)
+			panic("Error adding region");
+
+		SLIST_REMOVE(&nsec_region_list, nsec_region,
+			     tzc_region_non_sec, link);
+		free(nsec_region);
+	};
 
 	tzc_dump_state();
 
@@ -524,6 +510,18 @@ static TEE_Result stm32mp1_tzc_probe(const void *fdt, int node,
 				    "stm32mp1-tzc400");
 
 	return TEE_SUCCESS;
+
+err:
+	if (res)
+		tzc_free(tzc_dev);
+
+	SLIST_FOREACH_SAFE(nsec_region, &nsec_region_list, link, region_safe) {
+		SLIST_REMOVE(&nsec_region_list, nsec_region,
+			     tzc_region_non_sec, link);
+		free(nsec_region);
+	};
+
+	return res;
 }
 
 static const struct dt_device_match tzc_secu_match_table[] = {

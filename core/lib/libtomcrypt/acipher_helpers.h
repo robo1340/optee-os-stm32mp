@@ -35,7 +35,7 @@ static inline TEE_Result convert_ltc_verify_status(int ltc_res, int ltc_stat)
 	}
 }
 
-#ifdef _CFG_CORE_LTC_ECC
+#ifdef CFG_CRYPTOLIB_NAME_tomcrypt
 TEE_Result ecc_populate_ltc_private_key(ecc_key *ltc_key,
 					struct ecc_keypair *key,
 					uint32_t algo, size_t *key_size_bytes);

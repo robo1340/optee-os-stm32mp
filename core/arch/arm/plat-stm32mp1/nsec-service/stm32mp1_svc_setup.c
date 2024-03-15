@@ -31,7 +31,7 @@ static enum sm_handler_ret sip_service(struct sm_ctx *ctx __unused,
 		args->a2 = STM32_SIP_SVC_UID_2;
 		args->a3 = STM32_SIP_SVC_UID_3;
 		break;
-	case STM32_SIP_SVC_FUNC_SCMI_AGENT:
+	case STM32_SIP_SVC_FUNC_SCMI_AGENT0:
 		if (IS_ENABLED(CFG_STM32MP1_SCMI_SIP)) {
 			scmi_smt_fastcall_smc_entry(0);
 			args->a0 = STM32_SIP_SVC_OK;
@@ -39,10 +39,13 @@ static enum sm_handler_ret sip_service(struct sm_ctx *ctx __unused,
 			args->a0 = ARM_SMCCC_RET_NOT_SUPPORTED;
 		}
 		break;
-	/* Deprecated function IDs */
-	case STM32_SIP_SVC_FUNC_BSEC:
 	case STM32_SIP_SVC_FUNC_SCMI_AGENT1:
-		args->a0 = ARM_SMCCC_RET_NOT_SUPPORTED;
+		if (IS_ENABLED(CFG_STM32MP1_SCMI_SIP)) {
+			scmi_smt_fastcall_smc_entry(1);
+			args->a0 = STM32_SIP_SVC_OK;
+		} else {
+			args->a0 = ARM_SMCCC_RET_NOT_SUPPORTED;
+		}
 		break;
 	case STM32_SIP_SVC_FUNC_PWR:
 		args->a0 = pwr_scv_handler(args->a1, args->a2, args->a3);

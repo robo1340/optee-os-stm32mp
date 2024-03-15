@@ -48,6 +48,7 @@ required:
   - reg
   - clocks
   - interrupts
+  - resets
 
 additionalProperties: false
 

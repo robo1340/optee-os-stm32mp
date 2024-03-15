@@ -12,7 +12,7 @@
 #include <ffa.h>
 #include <generated/asm-defines.h>
 #include <keep.h>
-#include <kernel/thread.h>
+#include <kernel/thread_defs.h>
 #include <optee_ffa.h>
 
 FUNC thread_ffa_msg_wait , :
@@ -116,13 +116,6 @@ FUNC thread_rpc , :
 	ldr	x30, [sp, #8]
 	store_xregs x0, THREAD_CTX_REGS_X19, 19, 30
 	mov	x19, x0
-
-#if defined(CFG_CORE_PAUTH)
-	/* Save APIAKEY */
-	read_apiakeyhi  x1
-	read_apiakeylo  x2
-	store_xregs x0, THREAD_CTX_REGS_APIAKEY_HI, 1, 2
-#endif
 
 	bl	thread_get_tmp_sp
 	pop	x1, xzr		/* Match "push x1, x30" above */

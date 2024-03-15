@@ -114,24 +114,6 @@ static TEE_Result ecc_get_curve_info(uint32_t curve, uint32_t algo,
 	return TEE_SUCCESS;
 }
 
-/* Note: this function clears the key before setting the curve */
-static TEE_Result ecc_set_curve_from_name(ecc_key *ltc_key,
-					  const char *curve_name)
-{
-	const ltc_ecc_curve *curve = NULL;
-	int ltc_res = 0;
-
-	ltc_res = ecc_find_curve(curve_name, &curve);
-	if (ltc_res != CRYPT_OK)
-		return TEE_ERROR_NOT_SUPPORTED;
-
-	ltc_res = ecc_set_curve(curve, ltc_key);
-	if (ltc_res != CRYPT_OK)
-		return TEE_ERROR_GENERIC;
-
-	return TEE_SUCCESS;
-}
-
 static TEE_Result _ltc_ecc_generate_keypair(struct ecc_keypair *key,
 					    size_t key_size)
 {
@@ -140,23 +122,18 @@ static TEE_Result _ltc_ecc_generate_keypair(struct ecc_keypair *key,
 	int ltc_res;
 	size_t key_size_bytes = 0;
 	size_t key_size_bits = 0;
-	const char *name = NULL;
 
 	res = ecc_get_curve_info(key->curve, 0, &key_size_bytes, &key_size_bits,
-				 &name);
+				 NULL);
 	if (res != TEE_SUCCESS)
 		return res;
 
 	if (key_size != key_size_bits)
 		return TEE_ERROR_BAD_PARAMETERS;
 
-	res = ecc_set_curve_from_name(&ltc_tmp_key, name);
-	if (res)
-		return res;
-
 	/* Generate the ECC key */
-	ltc_res = ecc_generate_key(NULL, find_prng("prng_crypto"),
-				   &ltc_tmp_key);
+	ltc_res = ecc_make_key(NULL, find_prng("prng_crypto"),
+			       key_size_bytes, &ltc_tmp_key);
 	if (ltc_res != CRYPT_OK)
 		return TEE_ERROR_BAD_PARAMETERS;
 
@@ -184,6 +161,24 @@ static TEE_Result _ltc_ecc_generate_keypair(struct ecc_keypair *key,
 exit:
 	ecc_free(&ltc_tmp_key);		/* Free the temporary key */
 	return res;
+}
+
+/* Note: this function clears the key before setting the curve */
+static TEE_Result ecc_set_curve_from_name(ecc_key *ltc_key,
+					  const char *curve_name)
+{
+	const ltc_ecc_curve *curve = NULL;
+	int ltc_res = 0;
+
+	ltc_res = ecc_find_curve(curve_name, &curve);
+	if (ltc_res != CRYPT_OK)
+		return TEE_ERROR_NOT_SUPPORTED;
+
+	ltc_res = ecc_set_curve(curve, ltc_key);
+	if (ltc_res != CRYPT_OK)
+		return TEE_ERROR_GENERIC;
+
+	return TEE_SUCCESS;
 }
 
 /*
@@ -408,21 +403,18 @@ TEE_Result crypto_asym_alloc_ecc_keypair(struct ecc_keypair *s,
 		if (!IS_ENABLED(_CFG_CORE_LTC_SM2_DSA))
 			return TEE_ERROR_NOT_IMPLEMENTED;
 
-		s->curve = TEE_ECC_CURVE_SM2;
 		s->ops = &sm2_dsa_keypair_ops;
 		break;
 	case TEE_TYPE_SM2_PKE_KEYPAIR:
 		if (!IS_ENABLED(_CFG_CORE_LTC_SM2_PKE))
 			return TEE_ERROR_NOT_IMPLEMENTED;
 
-		s->curve = TEE_ECC_CURVE_SM2;
 		s->ops = &sm2_pke_keypair_ops;
 		break;
 	case TEE_TYPE_SM2_KEP_KEYPAIR:
 		if (!IS_ENABLED(_CFG_CORE_LTC_SM2_KEP))
 			return TEE_ERROR_NOT_IMPLEMENTED;
 
-		s->curve = TEE_ECC_CURVE_SM2;
 		s->ops = &sm2_kep_keypair_ops;
 		break;
 	default:
@@ -462,21 +454,18 @@ TEE_Result crypto_asym_alloc_ecc_public_key(struct ecc_public_key *s,
 		if (!IS_ENABLED(_CFG_CORE_LTC_SM2_DSA))
 			return TEE_ERROR_NOT_IMPLEMENTED;
 
-		s->curve = TEE_ECC_CURVE_SM2;
 		s->ops = &sm2_dsa_public_key_ops;
 		break;
 	case TEE_TYPE_SM2_PKE_PUBLIC_KEY:
 		if (!IS_ENABLED(_CFG_CORE_LTC_SM2_PKE))
 			return TEE_ERROR_NOT_IMPLEMENTED;
 
-		s->curve = TEE_ECC_CURVE_SM2;
 		s->ops = &sm2_pke_public_key_ops;
 		break;
 	case TEE_TYPE_SM2_KEP_PUBLIC_KEY:
 		if (!IS_ENABLED(_CFG_CORE_LTC_SM2_KEP))
 			return TEE_ERROR_NOT_IMPLEMENTED;
 
-		s->curve = TEE_ECC_CURVE_SM2;
 		s->ops = &sm2_kep_public_key_ops;
 		break;
 	default:

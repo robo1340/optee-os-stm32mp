@@ -16,7 +16,6 @@
 #define CLK_SET_PARENT_GATE	BIT(1) /* must be gated across re-parent */
 #define CLK_OPS_PARENT_ENABLE	BIT(2) /* parent need enable during re-parent */
 #define CLK_SET_RATE_PARENT	BIT(3) /* propagate rate change up one level */
-#define CLK_SET_RATE_UNGATE	BIT(4) /* clock needs to run to set rate */
 
 /**
  * struct clk - Clock structure
@@ -76,7 +75,7 @@ struct clk_duty {
 /**
  * struct clk_ops
  *
- * @is_enabled: Get effective state of the clock (on / off)
+ * @is_enabled: Get status of the clock (on / off)
  * @enable: Enable the clock
  * @disable: Disable the clock
  * @set_parent: Set the clock parent based on index
@@ -222,23 +221,10 @@ struct clk *clk_get_parent_by_index(struct clk *clk, size_t pidx);
 TEE_Result clk_set_parent(struct clk *clk, struct clk *parent);
 
 /**
- * clk_reparent - Update clock parent
- *
- * This function mandates that clock framework is locked against
- * concurrent accesses on clock tree.
- *
- * @clk: Clock for which the parent should be set
- * @parent: Parent clock to set
- * Return a TEE_Result compliant value
- */
-TEE_Result clk_reparent(struct clk *clk, struct clk *parent);
-
-/**
  * clk_get_duty_cyle - Get clock duty cycle
  *
- * @clk: Clock for which the duty cycle is requested
- * @duty: Output duty cycle info
- * Return a TEE_Result compliant value
+ * @clk: Clock for which the duty cycle is needed
+ * Returns the duty cycle structure
  */
 TEE_Result clk_get_duty_cyle(struct clk *clk, struct clk_duty *duty);
 

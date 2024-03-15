@@ -16,6 +16,7 @@
 
 #define TA_STM32MP_NVMEM_VERSION	0x02
 #define OTP_UPDATE_REQ			BIT(31)
+#define OTP_MAX_SIZE			96
 #define OTP_ERROR_DETECTED		BIT(0)
 
 /* OTP Structure
@@ -25,9 +26,8 @@
  *	uint32_t otp_value
  *	uint32_t otp_lock
  */
-#define OTP_EXCHANGE_MIN_SIZE	(sizeof(uint32_t) * 4)
-#define OTP_EXCHANGE_ALIGN	(sizeof(uint32_t) * 2)
-#define OTP_NB(size)		((((size) / sizeof(uint32_t)) - 2) / 2)
+#define OTP_EXCHANGE_MAX_SIZE	(sizeof(uint32_t) * \
+				 (2 + 2 * OTP_MAX_SIZE))
 
 static size_t session_refcount;
 static TEE_TASessionHandle pta_session = TEE_HANDLE_NULL;
@@ -35,7 +35,7 @@ static TEE_TASessionHandle pta_session = TEE_HANDLE_NULL;
 static TEE_Result nvmem_get_state(uint32_t *state)
 {
 	TEE_Result res = TEE_SUCCESS;
-	TEE_Param params[TEE_NUM_PARAMS] = { };
+	TEE_Param params[TEE_NUM_PARAMS];
 	const uint32_t exp_pt = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_OUTPUT,
 						TEE_PARAM_TYPE_NONE,
 						TEE_PARAM_TYPE_NONE,
@@ -61,16 +61,13 @@ static TEE_Result nvmem_read(uint32_t pt, TEE_Param params[TEE_NUM_PARAMS])
 	uint32_t *out = (uint32_t *)params[1].memref.buffer;
 	size_t out_size = params[1].memref.size;
 	uint32_t otp_id = 0;
-	uint32_t otp_nb = 0;
 	TEE_Result res = TEE_SUCCESS;
 
 	if (pt != exp_pt || !out || !out_size)
 		return TEE_ERROR_BAD_PARAMETERS;
 
 	if (params[0].value.a != STM32MP_NVMEM_OTP ||
-	    out_size < OTP_EXCHANGE_MIN_SIZE ||
-	    !IS_ALIGNED(out_size, OTP_EXCHANGE_ALIGN) ||
-	    !IS_ALIGNED_WITH_TYPE(params[1].memref.buffer, uint32_t))
+	    out_size < OTP_EXCHANGE_MAX_SIZE)
 		return TEE_ERROR_BAD_PARAMETERS;
 
 	/* Version */
@@ -81,8 +78,7 @@ static TEE_Result nvmem_read(uint32_t pt, TEE_Param params[TEE_NUM_PARAMS])
 	if (res)
 		return res;
 
-	otp_nb = OTP_NB(out_size);
-	for (otp_id = 0; otp_id < otp_nb; otp_id++, out++) {
+	for (otp_id = 0; otp_id < OTP_MAX_SIZE; otp_id++, out++) {
 		TEE_Param params_pta[TEE_NUM_PARAMS] = { };
 
 		/* Read OTP */
@@ -126,15 +122,12 @@ static TEE_Result nvmem_write(uint32_t pt, TEE_Param params[TEE_NUM_PARAMS])
 	uint32_t *in = (uint32_t *)params[1].memref.buffer;
 	size_t in_size = params[1].memref.size;
 	uint32_t otp_id = 0;
-	uint32_t otp_nb = 0;
 
 	if (pt != exp_pt || !in || !in_size)
 		return TEE_ERROR_BAD_PARAMETERS;
 
 	if (params[0].value.a != STM32MP_NVMEM_OTP ||
-	    in_size < OTP_EXCHANGE_MIN_SIZE ||
-	    !IS_ALIGNED(in_size, OTP_EXCHANGE_ALIGN) ||
-	    !IS_ALIGNED_WITH_TYPE(params[1].memref.buffer, uint32_t))
+	    in_size < OTP_EXCHANGE_MAX_SIZE)
 		return TEE_ERROR_BAD_PARAMETERS;
 
 	/* Check version */
@@ -144,8 +137,7 @@ static TEE_Result nvmem_write(uint32_t pt, TEE_Param params[TEE_NUM_PARAMS])
 	/* Skip global status */
 	in++;
 
-	otp_nb = OTP_NB(in_size);
-	for (otp_id = 0; otp_id < otp_nb; otp_id++) {
+	for (otp_id = 0; otp_id < OTP_MAX_SIZE; otp_id++) {
 		TEE_Param params_pta[TEE_NUM_PARAMS] = { };
 		uint32_t value = *in++;
 		uint32_t status = *in++;
@@ -232,7 +224,7 @@ TEE_Result TA_OpenSessionEntryPoint(uint32_t pt __unused,
 	session_refcount++;
 
 out:
-	if (h != TEE_HANDLE_NULL)
+	if (h)
 		TEE_FreePropertyEnumerator(h);
 
 	return res;

@@ -180,37 +180,37 @@
 
 static inline __noprof void isb(void)
 {
-	asm volatile ("isb" : : : "memory");
+	asm volatile ("isb");
 }
 
 static inline __noprof void dsb(void)
 {
-	asm volatile ("dsb" : : : "memory");
+	asm volatile ("dsb");
 }
 
 static inline __noprof void dsb_ish(void)
 {
-	asm volatile ("dsb ish" : : : "memory");
+	asm volatile ("dsb ish");
 }
 
 static inline __noprof void dsb_ishst(void)
 {
-	asm volatile ("dsb ishst" : : : "memory");
+	asm volatile ("dsb ishst");
 }
 
 static inline __noprof void dmb(void)
 {
-	asm volatile ("dmb" : : : "memory");
+	asm volatile ("dmb");
 }
 
 static inline __noprof void sev(void)
 {
-	asm volatile ("sev" : : : "memory");
+	asm volatile ("sev");
 }
 
 static inline __noprof void wfe(void)
 {
-	asm volatile ("wfe" : : : "memory");
+	asm volatile ("wfe");
 }
 
 static inline __noprof uint32_t read_cpsr(void)
@@ -242,7 +242,7 @@ static inline __noprof uint32_t read_spsr(void)
 
 static inline __noprof void wfi(void)
 {
-	asm volatile("wfi" : : : "memory");
+	asm volatile("wfi");
 }
 
 static __always_inline __noprof uint32_t read_pc(void)

@@ -16,7 +16,7 @@
 #include <stdio.h>
 #include <trace.h>
 
-#define FIXED_REGULATOR_NAME_LEN	22
+#define FIXED_REGULATOR_NAME_LEN	16
 
 struct fixed_regul {
 	char name[FIXED_REGULATOR_NAME_LEN];

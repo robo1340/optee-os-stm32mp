@@ -865,7 +865,7 @@ static bool is_smaller(const struct stm32_pka_bn *a,
 		if (_a > _b)
 			return false;
 
-	} while (i != 1U);
+	} while (i != 0U);
 
 	return false;
 }
@@ -965,8 +965,11 @@ out:
 TEE_Result stm32_pka_ecc_compute_montgomery(struct stm32_pka_bn *r2modn,
 					    const enum stm32_pka_curve_id cid)
 {
-	return stm32_pka_compute_montgomery(&curve_def[cid].p,
-					    curve_def[cid].p_len, r2modn);
+	/*
+	 * TODO: I don't know if I should use p or n: both values seem to work.
+	 */
+	return stm32_pka_compute_montgomery(&curve_def[cid].n,
+					    curve_def[cid].n_len, r2modn);
 }
 
 static TEE_Result stm32_pka_is_point_on_param(const struct stm32_pka_point *p,
@@ -1518,7 +1521,8 @@ static TEE_Result stm32_pka_parse_fdt(struct stm32_pka_platdata *pdata,
 
 	_fdt_fill_device_info(fdt, &info, node);
 
-	if (info.reg_size == DT_INFO_INVALID_REG_SIZE ||
+	if (info.reset == DT_INFO_INVALID_RESET ||
+	    info.reg_size == DT_INFO_INVALID_REG_SIZE ||
 	    info.reg == DT_INFO_INVALID_REG)
 		return TEE_ERROR_BAD_PARAMETERS;
 
@@ -1527,9 +1531,7 @@ static TEE_Result stm32_pka_parse_fdt(struct stm32_pka_platdata *pdata,
 	if (!pdata->pa_or_va.va)
 		panic();
 
-	res = rstctrl_dt_get_by_index(fdt, node, 0, &pdata->reset);
-	if (res != TEE_SUCCESS && res != TEE_ERROR_ITEM_NOT_FOUND)
-		return res;
+	pdata->reset_id = (unsigned int)info.reset;
 
 	res = clk_dt_get_by_index(fdt, node, 0, &pdata->clk);
 	if (res)
@@ -1582,13 +1584,11 @@ static TEE_Result stm32_pka_probe(const void *fdt, int node,
 
 	clk_enable(pka_pdata.clk);
 
-	if (pka_pdata.reset &&
-	    rstctrl_assert_to(pka_pdata.reset, TIMEOUT_US_1MS) != 0)
+	if (stm32_reset_assert(pka_pdata.reset_id, TIMEOUT_US_1MS) != 0)
 		panic();
 
 	udelay(PKA_RESET_DELAY);
-	if (pka_pdata.reset &&
-	    rstctrl_deassert_to(pka_pdata.reset, TIMEOUT_US_1MS) != 0)
+	if (stm32_reset_deassert(pka_pdata.reset_id, TIMEOUT_US_1MS) != 0)
 		panic();
 
 #if TRACE_LEVEL >= TRACE_FLOW

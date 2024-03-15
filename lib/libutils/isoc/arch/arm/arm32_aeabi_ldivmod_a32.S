@@ -5,8 +5,6 @@
 
 #include <asm.S>
 
-	.section .note.GNU-stack,"",%progbits
-
 /*
  * __value_in_regs lldiv_t __aeabi_ldivmod( long long n, long long d)
  */

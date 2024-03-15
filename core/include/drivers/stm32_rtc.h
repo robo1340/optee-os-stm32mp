@@ -8,7 +8,6 @@
 #define __PLAT_RTC_H__
 
 #include <stdbool.h>
-#include <tee_api_types.h>
 
 struct stm32_rtc_calendar {
 	uint32_t ssr;
@@ -52,11 +51,8 @@ unsigned long long stm32_rtc_diff_calendar(struct stm32_rtc_calendar *cur,
 /* Enable tamper and secure timestamp access in RTC */
 void stm32_rtc_set_tamper_timestamp(void);
 
-/*
- * *ret equals true if and only if RTC timestamp is enable
- * Returns TEE_Success on a successful read.
- */
-TEE_Result stm32_rtc_is_timestamp_enable(bool *ret);
+/* Return true if and only if RTC timestamp is enable */
+bool stm32_rtc_is_timestamp_enable(void);
 
 /* Get RTC timestamp for current time */
 void stm32_rtc_get_timestamp(struct stm32_rtc_time *tamp_ts);

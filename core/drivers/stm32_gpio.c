@@ -559,9 +559,8 @@ static __unused struct stm32_pinctrl_list
 static __unused void free_banks(void)
 {
 	struct stm32_gpio_bank *bank = NULL;
-	struct stm32_gpio_bank *next = NULL;
 
-	STAILQ_FOREACH_SAFE(bank, &bank_list, link, next)
+	STAILQ_FOREACH(bank, &bank_list, link)
 		free(bank);
 }
 
@@ -661,7 +660,6 @@ static struct stm32_gpio_bank *_fdt_stm32_gpio_controller(const void *fdt,
 {
 	int i = 0;
 	size_t blen = 0;
-	paddr_t pa = 0;
 	int len = 0;
 	const fdt32_t *cuint = NULL;
 	struct stm32_gpio_bank *bank = NULL;
@@ -671,7 +669,6 @@ static struct stm32_gpio_bank *_fdt_stm32_gpio_controller(const void *fdt,
 	const struct stm32_gpio_compat_data *comp_data =
 		(struct stm32_gpio_compat_data *)data;
 
-	/* Probe deferrable devices first */
 	*res = clk_dt_get_by_index(fdt, node, 0, &clk);
 	if (*res)
 		return NULL;
@@ -688,12 +685,11 @@ static struct stm32_gpio_bank *_fdt_stm32_gpio_controller(const void *fdt,
 	 * Do not rely *only* on the "reg" property to get the address,
 	 * but consider also the "ranges" translation property
 	 */
-	pa = _fdt_reg_base_address(fdt, node);
-	if (pa == DT_INFO_INVALID_REG)
+	cuint = fdt_getprop(fdt, node, "reg", NULL);
+	if (!cuint)
 		panic("missing reg property");
 
-	pa_va.pa = pa + range_offset;
-
+	pa_va.pa = fdt32_to_cpu(*cuint) + range_offset;
 	blen = _fdt_reg_size(fdt, node);
 	if (blen == DT_INFO_INVALID_REG_SIZE)
 		panic("missing reg size property");
@@ -726,20 +722,16 @@ static struct stm32_gpio_bank *_fdt_stm32_gpio_controller(const void *fdt,
 
 	/* Parse gpio-ranges with its 4 parameters */
 	cuint = fdt_getprop(fdt, node, "gpio-ranges", &len);
-	if (cuint) {
-		len /= sizeof(*cuint);
-		if ((len % 4) != 0)
-			panic("wrong gpio-ranges syntax");
+	len /= sizeof(*cuint);
+	if ((len % 4) != 0)
+		panic("wrong gpio-ranges syntax");
 
-		/* Get the last defined gpio line (offset + nb of pins) */
-		for (i = 0; i < len / 4; i++) {
-			bank->ngpios = MAX(bank->ngpios,
+	/* Get the last defined gpio line (offset + nb of pins) */
+	for (i = 0; i < len / 4; i++) {
+		bank->ngpios = MAX(bank->ngpios,
 				   (unsigned int)(fdt32_to_cpu(*(cuint + 1)) +
 						  fdt32_to_cpu(*(cuint + 3))));
-			cuint += 4;
-		}
-	} else if (len != -FDT_ERR_NOTFOUND) {
-		panic();
+		cuint += 4;
 	}
 
 	*res = TEE_SUCCESS;
@@ -808,7 +800,7 @@ static TEE_Result stm32_gpio_parse_pinctrl_node(const void *fdt, int node,
 		}
 	}
 
-	return TEE_SUCCESS;
+	return res;
 }
 
 static void stm32_gpio_get_conf_sec(struct stm32_gpio_bank *bank)
@@ -836,6 +828,8 @@ static TEE_Result stm32_gpio_pm_resume(void)
 				     &backup->pinctrl.config);
 	}
 
+	stm32mp_syscfg_enable_io_comp();
+
 	return TEE_SUCCESS;
 }
 
@@ -843,6 +837,8 @@ static TEE_Result stm32_gpio_pm_suspend(void)
 {
 	struct stm32_gpio_bank *bank = NULL;
 	struct stm32_pinctrl_backup *backup = NULL;
+
+	stm32mp_syscfg_disable_io_comp();
 
 	STAILQ_FOREACH(bank, &bank_list, link) {
 		stm32_gpio_get_conf_sec(bank);
@@ -909,6 +905,9 @@ static TEE_Result stm32_gpio_probe(const void *fdt, int offs,
 	}
 
 	if (!pm_register) {
+		/* Enable IO Compensation Cells */
+		stm32mp_syscfg_enable_io_comp();
+
 		/* Register to PM once for all probed banks */
 		register_pm_core_service_cb(stm32_gpio_pm, NULL,
 					    "stm32-gpio-service");

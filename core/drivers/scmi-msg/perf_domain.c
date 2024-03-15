@@ -264,8 +264,7 @@ static void scmi_perf_level_set(struct scmi_msg *msg)
 
 /* List levels array by small chunks fitting in SCMI message max payload size */
 #define LEVELS_ARRAY_SIZE \
-	((SCMI_SEC_PAYLOAD_SIZE - \
-	  sizeof(struct scmi_perf_describe_levels_a2p)) / \
+	((SCMI_PLAYLOAD_MAX - sizeof(struct scmi_perf_describe_levels_a2p)) / \
 	 sizeof(struct scmi_perf_level))
 
 static void scmi_perf_describe_levels(struct scmi_msg *msg)

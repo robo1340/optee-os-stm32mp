@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 /*
- * Copyright (c) 2021-2022, Arm Limited
+ * Copyright (c) 2021, Arm Limited
  */
 #include <assert.h>
 #include <bench.h>
@@ -10,12 +10,12 @@
 #include <kernel/spinlock.h>
 #include <kernel/spmc_sp_handler.h>
 #include <kernel/tee_misc.h>
-#include <kernel/thread_private.h>
 #include <mm/mobj.h>
 #include <mm/sp_mem.h>
 #include <mm/vm.h>
 #include <optee_ffa.h>
 #include <string.h>
+#include "thread_private.h"
 
 static unsigned int mem_ref_lock = SPINLOCK_UNLOCK;
 
@@ -226,8 +226,7 @@ static int spmc_sp_add_nw_region(struct sp_mem *smem,
 {
 	uint64_t page_count = READ_ONCE(mem_reg->total_page_count);
 	struct sp_mem_map_region *region = NULL;
-	struct mobj *m = sp_mem_new_mobj(page_count, TEE_MATTR_MEM_TYPE_CACHED,
-					 false);
+	struct mobj *m = sp_mem_new_mobj(page_count);
 	unsigned int i = 0;
 	unsigned int idx = 0;
 	int res = FFA_OK;
@@ -913,15 +912,9 @@ void spmc_sp_msg_handler(struct thread_smc_args *args,
 	thread_check_canaries();
 	do {
 		switch (args->a0) {
-#ifdef ARM64
-		case FFA_MSG_SEND_DIRECT_REQ_64:
-#endif
 		case FFA_MSG_SEND_DIRECT_REQ_32:
 			caller_sp = ffa_handle_sp_direct_req(args, caller_sp);
 			break;
-#ifdef ARM64
-		case FFA_MSG_SEND_DIRECT_RESP_64:
-#endif
 		case FFA_MSG_SEND_DIRECT_RESP_32:
 			caller_sp = ffa_handle_sp_direct_resp(args, caller_sp);
 			break;

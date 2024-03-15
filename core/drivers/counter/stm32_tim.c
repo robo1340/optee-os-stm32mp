@@ -8,6 +8,7 @@
 #include <drivers/counter.h>
 #include <drivers/stm32_tim.h>
 #include <io.h>
+#include <keep.h>
 #include <kernel/boot.h>
 #include <kernel/delay.h>
 #include <kernel/dt.h>
@@ -271,6 +272,7 @@ static const struct counter_ops stm32_tim_counter_ops = {
 	.set_config = stm32_tim_counter_set_config,
 	.release_config = stm32_tim_counter_release_config,
 };
+DECLARE_KEEP_PAGER(stm32_tim_counter_ops);
 
 #ifdef CFG_EMBED_DTB
 #define TIMER_COUNTER_COMPAT		"st,stm32-timer-counter"
@@ -352,10 +354,11 @@ static struct timer_device *stm32_timer_alloc(void)
 
 static void stm32_timer_free(struct timer_device *tim_dev)
 {
-	if (tim_dev && tim_dev->counter_dev)
+	if (tim_dev->counter_dev)
 		counter_dev_free(tim_dev->counter_dev);
 
-	free(tim_dev);
+	if (tim_dev)
+		free(tim_dev);
 }
 
 static TEE_Result stm32_timer_probe(struct timer_device *tim_dev)

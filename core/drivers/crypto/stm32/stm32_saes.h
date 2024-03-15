@@ -7,7 +7,6 @@
 #define STM32_SAES_H
 
 #include <drivers/clk.h>
-#include <drivers/rstctrl.h>
 #include <kernel/mutex.h>
 #include <mm/core_memprot.h>
 #include <stdbool.h>
@@ -17,7 +16,7 @@
 struct stm32_saes_platdata {
 	struct io_pa_va base;
 	struct clk *clk;
-	struct rstctrl *reset;
+	unsigned int reset_id;
 };
 
 enum stm32_saes_chaining_mode {

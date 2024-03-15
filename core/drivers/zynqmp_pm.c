@@ -6,7 +6,6 @@
 #include <arm.h>
 #include <drivers/zynqmp_pm.h>
 #include <kernel/cache_helpers.h>
-#include <kernel/tee_misc.h>
 #include <kernel/thread.h>
 #include <mm/core_memprot.h>
 #include <string.h>
@@ -87,14 +86,6 @@ static const struct {
 } efuse_tbl[] = {
 	EFUSE_ELT(DNA),
 	EFUSE_ELT(IP_DISABLE),
-	EFUSE_ELT(USER0),
-	EFUSE_ELT(USER1),
-	EFUSE_ELT(USER2),
-	EFUSE_ELT(USER3),
-	EFUSE_ELT(USER4),
-	EFUSE_ELT(USER5),
-	EFUSE_ELT(USER6),
-	EFUSE_ELT(USER7),
 	EFUSE_ELT(MISC_USER_CTRL),
 	EFUSE_ELT(SEC_CTRL),
 };
@@ -102,11 +93,9 @@ static const struct {
 static TEE_Result efuse_op(enum efuse_op op, uint8_t *buf, size_t buf_sz,
 			   enum zynqmp_efuse_id id, bool puf)
 {
-	struct xilinx_efuse *efuse_op = NULL;
-	uint8_t *tmpbuf = NULL;
+	struct xilinx_efuse efuse = { };
 	paddr_t addr = 0;
-	uint32_t efuse_ret = 0;
-	TEE_Result res = TEE_ERROR_GENERIC;
+	uint32_t res = 0;
 
 	if (!buf)
 		return TEE_ERROR_BAD_PARAMETERS;
@@ -116,69 +105,45 @@ static TEE_Result efuse_op(enum efuse_op op, uint8_t *buf, size_t buf_sz,
 		return TEE_ERROR_BAD_PARAMETERS;
 	}
 
-	efuse_op = alloc_cache_aligned(sizeof(*efuse_op));
-	if (!efuse_op) {
-		EMSG("Failed to allocate cache aligned buffer for operation");
-		return TEE_ERROR_OUT_OF_MEMORY;
+	if (!IS_ALIGNED((uintptr_t)buf, CACHELINE_LEN)) {
+		EMSG("Buffer should be cache aligned");
+		return TEE_ERROR_BAD_PARAMETERS;
 	}
 
-	tmpbuf = alloc_cache_aligned(buf_sz);
-	if (!tmpbuf) {
-		EMSG("Failed to allocate cache aligned buffer for data");
-		res = TEE_ERROR_OUT_OF_MEMORY;
-		goto out;
-	}
+	if (!IS_ALIGNED(buf_sz, CACHELINE_LEN))
+		return TEE_ERROR_BAD_PARAMETERS;
 
-	if (op == EFUSE_WRITE)
-		memcpy(tmpbuf, buf, buf_sz);
+	efuse.size = efuse_tbl[id].bytes / sizeof(uint32_t);
+	efuse.offset = efuse_tbl[id].offset;
+	efuse.src = virt_to_phys(buf);
+	efuse.pufuserfuse = puf;
+	efuse.flag = op;
 
-	efuse_op->size = efuse_tbl[id].bytes / sizeof(uint32_t);
-	efuse_op->offset = efuse_tbl[id].offset;
-	efuse_op->src = virt_to_phys(tmpbuf);
-	efuse_op->pufuserfuse = puf;
-	efuse_op->flag = op;
+	cache_operation(TEE_CACHECLEAN, buf, buf_sz);
+	cache_operation(TEE_CACHECLEAN, &efuse, sizeof(efuse));
 
-	cache_operation(TEE_CACHECLEAN, tmpbuf, buf_sz);
-	cache_operation(TEE_CACHECLEAN, efuse_op, sizeof(*efuse_op));
+	addr = virt_to_phys(&efuse);
 
-	addr = virt_to_phys(efuse_op);
-
-	efuse_ret = zynqmp_sip_call(EFUSE_ACCESS_SMC, addr >> 32, addr, 0, 0,
-				    NULL);
-	if (efuse_ret) {
-		if (efuse_ret == EFUSE_NOT_ENABLED)
+	res = zynqmp_sip_call(EFUSE_ACCESS_SMC, addr >> 32, addr, 0, 0, NULL);
+	if (res) {
+		if (res == EFUSE_NOT_ENABLED)
 			EMSG("eFuse access is not enabled");
 		else
-			EMSG("Error in eFuse access %#"PRIx32, efuse_ret);
-		res = TEE_ERROR_GENERIC;
-		goto out;
+			EMSG("Error in eFuse access %#"PRIx32, res);
+
+		return TEE_ERROR_GENERIC;
 	}
 
-	if (op == EFUSE_READ) {
-		res = cache_operation(TEE_CACHEINVALIDATE, tmpbuf, buf_sz);
-		if (res)
-			goto out;
-		memcpy(buf, tmpbuf, buf_sz);
-	}
+	if (op == EFUSE_READ)
+		return cache_operation(TEE_CACHEINVALIDATE, buf, buf_sz);
 
-	res = TEE_SUCCESS;
-
-out:
-	free(tmpbuf);
-	free(efuse_op);
-	return res;
+	return TEE_ERROR_NOT_IMPLEMENTED;
 }
 
 TEE_Result zynqmp_efuse_read(uint8_t *buf, size_t sz, enum zynqmp_efuse_id id,
 			     bool puf)
 {
 	return efuse_op(EFUSE_READ, buf, sz, id, puf);
-}
-
-TEE_Result zynqmp_efuse_write(uint8_t *buf, size_t sz, enum zynqmp_efuse_id id,
-			      bool puf)
-{
-	return efuse_op(EFUSE_WRITE, buf, sz, id, puf);
 }
 
 TEE_Result zynqmp_soc_version(uint32_t *version)

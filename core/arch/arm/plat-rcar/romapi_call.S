@@ -6,7 +6,6 @@
 #include <asm.S>
 #include <arm.h>
 #include <arm64_macros.S>
-#include <generated/asm-defines.h>
 #include <kernel/cache_helpers.h>
 
 /* uint32_t __plat_romapi_wrapper(paddr_t func, uint64_t arg1, uint64_t arg2,
@@ -32,11 +31,9 @@ FUNC __plat_romapi_wrapper , : , .identity_map
 	/*
 	 * We are running at identity location, so we can't use bl there,
 	 * because assembler will generate relative address to virt_to_phys(),
-	 * which is not identity mapped.
+	 * which is not identity mapped. So we need to use absolute address.
 	 */
-	adr_l   x9, virt_to_phys
-	ldr     x10, boot_mmu_config + CORE_MMU_CONFIG_LOAD_OFFSET
-	add     x9, x9, x10
+	ldr	x9, =virt_to_phys
 	blr	x9
 #else
 	bl	virt_to_phys
@@ -47,9 +44,7 @@ FUNC __plat_romapi_wrapper , : , .identity_map
 	mov     x0, #DCACHE_OP_CLEAN
 #ifdef CFG_CORE_ASLR
 	/* See the comment above */
-	adr_l   x9, dcache_op_all
-	ldr     x10, boot_mmu_config + CORE_MMU_CONFIG_LOAD_OFFSET
-	add     x9, x9, x10
+	ldr	x9, =dcache_op_all
 	blr	x9
 #else
 	bl	dcache_op_all

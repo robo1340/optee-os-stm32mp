@@ -1,3 +1,4 @@
+ifeq ($(CFG_EMBED_DTB),y)
 # Specific hack for stm32mp1: get DDR size from the generated DTB to be
 # embedded in core. This force CFG_DRAM_SIZE value when build config
 # files are generated.
@@ -9,16 +10,15 @@ define get_memory_size
 $(shell fdtget -t u $(core-embed-fdt-dtb) /$(get_memory_node) reg | cut -d ' ' -f 2)
 endef
 
+$(conf-file): $(core-embed-fdt-dtb)
+$(conf-file): CFG_DRAM_SIZE = $(get_memory_size)
+$(conf-mk-file): $(core-embed-fdt-dtb)
+$(conf-mk-file): CFG_DRAM_SIZE = $(get_memory_size)
+$(conf-cmake-file): $(core-embed-fdt-dtb)
+$(conf-cmake-file): CFG_DRAM_SIZE = $(get_memory_size)
+endif #CFG_EMBED_DTB
+
 include core/arch/arm/kernel/link.mk
-
-all: check_build_variables
-
-check_build_variables: $(link-out-dir)/tee.elf
-	@t=`printf "%u" ${CFG_DRAM_SIZE}`; if [ $$t -ne ${get_memory_size} ]; then \
-	    t_cfg=$$(($$t / (1024*1024))); t_dtb=$$((${get_memory_size} / (1024*1024))); \
-	    echo "Wrong CFG_DRAM_SIZE $${t_cfg}MBytes, in device-tree: $${t_dtb}MBytes"; \
-	    exit 1; \
-	fi
 
 ifeq ($(CFG_STM32MP15x_STM32IMAGE),y)
 # Create stm32 formatted images from the native binary images

@@ -174,7 +174,6 @@ at91_clk_register_generated(struct pmc_data *pmc,
 		free(gck);
 		return NULL;
 	}
-	pmc_register_id(id);
 
 	return clk;
 }

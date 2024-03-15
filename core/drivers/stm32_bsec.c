@@ -96,13 +96,8 @@
 #define BSEC_MODE_BIST1_LOCK_MASK	BIT(6)
 #define BSEC_MODE_BIST2_LOCK_MASK	BIT(7)
 
-/* BSEC_DEBUG unreserved bits */
-#ifdef CFG_STM32MP13
-#define BSEC_DEN_ALL_MSK		U(0x6FE)
-#endif
-#ifdef CFG_STM32MP15
-#define BSEC_DEN_ALL_MSK		U(0x7FE)
-#endif
+/* BSEC_DEBUG */
+#define BSEC_DEN_ALL_MSK		GENMASK_32(10, 0)
 
 /*
  * OTP Lock services definition
@@ -183,8 +178,7 @@ static bool is_closed_mode(void)
 	TEE_Result res = TEE_ERROR_GENERIC;
 	const uint32_t mask = CFG0_CLOSED_MASK;
 
-	res = stm32_bsec_find_otp_in_nvmem_layout("cfg0_otp", &otp_cfg,
-						  NULL, NULL);
+	res = stm32_bsec_find_otp_in_nvmem_layout("cfg0_otp", &otp_cfg, NULL);
 	if (res)
 		panic("CFG0 OTP not found");
 
@@ -217,12 +211,15 @@ static TEE_Result check_no_error(uint32_t otp_id, bool check_disturbed)
 
 static TEE_Result power_up_safmem(void)
 {
-	uint64_t timeout_ref = 0;
+	uint64_t timeout_ref = timeout_init_us(BSEC_TIMEOUT_US);
 
 	io_mask32(bsec_base() + BSEC_OTP_CONF_OFF, BSEC_CONF_POWER_UP_MASK,
 		  BSEC_CONF_POWER_UP_MASK);
 
-	timeout_ref = timeout_init_us(BSEC_TIMEOUT_US);
+	/*
+	 * If a timeout is detected, test the condition again to consider
+	 * cases where timeout is due to the executing TEE thread rescheduling.
+	 */
 	while (!timeout_elapsed(timeout_ref))
 		if (bsec_status() & BSEC_MODE_PWR_MASK)
 			break;
@@ -235,11 +232,14 @@ static TEE_Result power_up_safmem(void)
 
 static TEE_Result power_down_safmem(void)
 {
-	uint64_t timeout_ref = 0;
+	uint64_t timeout_ref = timeout_init_us(BSEC_TIMEOUT_US);
 
 	io_mask32(bsec_base() + BSEC_OTP_CONF_OFF, 0, BSEC_CONF_POWER_UP_MASK);
 
-	timeout_ref = timeout_init_us(BSEC_TIMEOUT_US);
+	/*
+	 * If a timeout is detected, test the condition again to consider
+	 * cases where timeout is due to the executing TEE thread rescheduling.
+	 */
 	while (!timeout_elapsed(timeout_ref))
 		if (!(bsec_status() & BSEC_MODE_PWR_MASK))
 			break;
@@ -250,7 +250,7 @@ static TEE_Result power_down_safmem(void)
 	return TEE_ERROR_GENERIC;
 }
 
-static TEE_Result stm32_bsec_shadow_register(uint32_t otp_id)
+TEE_Result stm32_bsec_shadow_register(uint32_t otp_id)
 {
 	TEE_Result result = 0;
 	uint32_t exceptions = 0;
@@ -402,6 +402,7 @@ out:
 
 	return result;
 }
+#endif /*CFG_STM32_BSEC_WRITE*/
 
 TEE_Result stm32_bsec_permanent_lock_otp(uint32_t otp_id)
 {
@@ -463,11 +464,11 @@ out:
 
 	return result;
 }
-#endif /*CFG_STM32_BSEC_WRITE*/
 
 TEE_Result stm32_bsec_write_debug_conf(uint32_t value)
 {
 	TEE_Result result = TEE_ERROR_GENERIC;
+	uint32_t masked_val = value & BSEC_DEN_ALL_MSK;
 	uint32_t exceptions = 0;
 
 	if (is_invalid_mode())
@@ -475,10 +476,9 @@ TEE_Result stm32_bsec_write_debug_conf(uint32_t value)
 
 	exceptions = bsec_lock();
 
-	io_clrsetbits32(bsec_base() + BSEC_DEN_OFF, BSEC_DEN_ALL_MSK, value);
+	io_write32(bsec_base() + BSEC_DEN_OFF, value);
 
-	if (((io_read32(bsec_base() + BSEC_DEN_OFF) & BSEC_DEN_ALL_MSK) ==
-	    value))
+	if ((io_read32(bsec_base() + BSEC_DEN_OFF) ^ masked_val) == 0U)
 		result = TEE_SUCCESS;
 
 	bsec_unlock(exceptions);
@@ -488,7 +488,7 @@ TEE_Result stm32_bsec_write_debug_conf(uint32_t value)
 
 uint32_t stm32_bsec_read_debug_conf(void)
 {
-	return io_read32(bsec_base() + BSEC_DEN_OFF) & BSEC_DEN_ALL_MSK;
+	return io_read32(bsec_base() + BSEC_DEN_OFF);
 }
 
 static TEE_Result set_bsec_lock(uint32_t otp_id, size_t lock_offset)
@@ -566,6 +566,30 @@ TEE_Result stm32_bsec_read_permanent_lock(uint32_t otp_id, bool *locked)
 	return read_bsec_lock(otp_id, locked, BSEC_WRLOCK_OFF);
 }
 
+TEE_Result stm32_bsec_otp_lock(uint32_t service)
+{
+	vaddr_t addr = bsec_base() + BSEC_OTP_LOCK_OFF;
+
+	if (is_invalid_mode())
+		return TEE_ERROR_SECURITY;
+
+	switch (service) {
+	case BSEC_LOCK_UPPER_OTP:
+		io_write32(addr, BIT(BSEC_LOCK_UPPER_OTP));
+		break;
+	case BSEC_LOCK_DEBUG:
+		io_write32(addr, BIT(BSEC_LOCK_DEBUG));
+		break;
+	case BSEC_LOCK_PROGRAM:
+		io_write32(addr, BIT(BSEC_LOCK_PROGRAM));
+		break;
+	default:
+		return TEE_ERROR_BAD_PARAMETERS;
+	}
+
+	return TEE_SUCCESS;
+}
+
 static size_t nsec_access_array_size(void)
 {
 	size_t upper_count = otp_max_id() - otp_upper_base() + 1;
@@ -586,12 +610,12 @@ static bool nsec_access_granted(unsigned int index)
 bool stm32_bsec_can_access_otp(uint32_t otp_id)
 {
 	if (otp_id > otp_max_id())
-		return false;
+		return TEE_ERROR_BAD_PARAMETERS;
 
 	if (is_invalid_mode())
-		return false;
+		return TEE_ERROR_SECURITY;
 
-	return true;
+	return TEE_SUCCESS;
 }
 
 bool stm32_bsec_nsec_can_access_otp(uint32_t otp_id)
@@ -600,19 +624,10 @@ bool stm32_bsec_nsec_can_access_otp(uint32_t otp_id)
 	       nsec_access_granted(otp_id - otp_upper_base());
 }
 
-/*
- * @name: Name of the nvmem node in the DT
- * @otp_id: BSEC base index for the OTP words
- * @bit_offset: Bit offset in the OTP word
- * @bit_len: Bit size of the OTP word
- * @phandle: Associated phandle in DT
- */
 struct nvmem_layout {
 	char *name;
 	uint32_t otp_id;
-	size_t bit_offset;
 	size_t bit_len;
-	uint32_t phandle;
 };
 
 static struct nvmem_layout *nvmem_layout;
@@ -620,7 +635,6 @@ static size_t nvmem_layout_count;
 
 TEE_Result stm32_bsec_find_otp_in_nvmem_layout(const char *name,
 					       uint32_t *otp_id,
-					       uint8_t *otp_bit_offset,
 					       size_t *otp_bit_len)
 {
 	size_t i = 0;
@@ -635,55 +649,16 @@ TEE_Result stm32_bsec_find_otp_in_nvmem_layout(const char *name,
 		if (otp_id)
 			*otp_id = nvmem_layout[i].otp_id;
 
-		if (otp_bit_offset)
-			*otp_bit_offset = nvmem_layout[i].bit_offset;
-
 		if (otp_bit_len)
 			*otp_bit_len = nvmem_layout[i].bit_len;
 
-		DMSG("nvmem %s = %zu: %"PRIu32" bit offset: %zu, length: %zu",
-		     name, i, nvmem_layout[i].otp_id,
-		     nvmem_layout[i].bit_offset, nvmem_layout[i].bit_len);
+		DMSG("nvmem %s = %zu: %"PRId32" %zu", name, i,
+		     nvmem_layout[i].otp_id, nvmem_layout[i].bit_len);
 
 		return TEE_SUCCESS;
 	}
 
 	DMSG("nvmem %s failed", name);
-
-	return TEE_ERROR_ITEM_NOT_FOUND;
-}
-
-TEE_Result stm32_bsec_find_otp_by_phandle(const uint32_t phandle,
-					  uint32_t *otp_id,
-					  uint8_t *otp_bit_offset,
-					  size_t *otp_bit_len)
-{
-	size_t i = 0;
-
-	if (!phandle)
-		return TEE_ERROR_GENERIC;
-
-	for (i = 0; i < nvmem_layout_count; i++) {
-		if (nvmem_layout[i].phandle != phandle)
-			continue;
-
-		if (otp_id)
-			*otp_id = nvmem_layout[i].otp_id;
-
-		if (otp_bit_offset)
-			*otp_bit_offset = nvmem_layout[i].bit_offset;
-
-		if (otp_bit_len)
-			*otp_bit_len = nvmem_layout[i].bit_len;
-
-		DMSG("nvmem = %zu: %"PRIu32" bit offset: %zu, length: %zu",
-		     i, nvmem_layout[i].otp_id,
-		     nvmem_layout[i].bit_offset, nvmem_layout[i].bit_len);
-
-		return TEE_SUCCESS;
-	}
-
-	DMSG("nvmem %u not found", phandle);
 
 	return TEE_ERROR_ITEM_NOT_FOUND;
 }
@@ -709,8 +684,8 @@ TEE_Result stm32_bsec_get_state(uint32_t *state)
 	if (!IS_ENABLED(CFG_STM32MP13))
 		return TEE_SUCCESS;
 
-	res = stm32_bsec_find_otp_in_nvmem_layout("oem_enc_key", &otp_enc_id,
-						  NULL, &otp_bit_len);
+	res = stm32_bsec_find_otp_in_nvmem_layout("oem_enc_key",
+						  &otp_enc_id, &otp_bit_len);
 	if (!res && otp_bit_len) {
 		unsigned int start = otp_enc_id / BSEC_BITS_PER_WORD;
 		size_t otp_nb = ROUNDUP_DIV(otp_bit_len, BSEC_BITS_PER_WORD);
@@ -754,22 +729,24 @@ static void bsec_dt_otp_nsec_access(void *fdt, int bsec_node)
 		panic();
 
 	fdt_for_each_subnode(bsec_subnode, fdt, bsec_node) {
-		unsigned int reg_offset = 0;
-		unsigned int reg_size = 0;
+		const fdt32_t *cuint = NULL;
 		unsigned int otp_id = 0;
-		unsigned int i = 0;
+		unsigned int i, j = 0;
 		size_t size = 0;
+		uint32_t offset = 0;
+		uint32_t length = 0;
 
-		reg_offset = _fdt_reg_base_address(fdt, bsec_subnode);
-		reg_size = _fdt_reg_size(fdt, bsec_subnode);
+		cuint = fdt_getprop(fdt, bsec_subnode, "reg", NULL);
+		assert(cuint);
 
-		assert(reg_offset != DT_INFO_INVALID_REG &&
-		       reg_size != DT_INFO_INVALID_REG_SIZE);
+		offset = fdt32_to_cpu(*cuint);
+		cuint++;
+		length = fdt32_to_cpu(*cuint);
 
-		otp_id = reg_offset / sizeof(uint32_t);
+		otp_id = offset / sizeof(uint32_t);
 
 		if (otp_id < STM32MP1_UPPER_OTP_START) {
-			unsigned int otp_end = ROUNDUP(reg_offset + reg_size,
+			unsigned int otp_end = ROUNDUP(offset + length,
 						       sizeof(uint32_t)) /
 					       sizeof(uint32_t);
 
@@ -779,10 +756,10 @@ static void bsec_dt_otp_nsec_access(void *fdt, int bsec_node)
 				 * only the upper part.
 				 */
 				otp_id = STM32MP1_UPPER_OTP_START;
-				reg_size -= (STM32MP1_UPPER_OTP_START *
-					     sizeof(uint32_t)) - reg_offset;
-				reg_offset = STM32MP1_UPPER_OTP_START *
-					     sizeof(uint32_t);
+				length -= (STM32MP1_UPPER_OTP_START *
+					   sizeof(uint32_t)) - offset;
+				offset = STM32MP1_UPPER_OTP_START *
+					 sizeof(uint32_t);
 
 				DMSG("OTP crosses Lower/Upper boundary");
 			} else {
@@ -802,12 +779,12 @@ static void bsec_dt_otp_nsec_access(void *fdt, int bsec_node)
 			 * Check if fuses of the subnode
 			 * have the same lock status
 			 */
-			for (i = 1; i < (reg_size / sizeof(uint32_t)); i++) {
-				stm32_bsec_read_permanent_lock(otp_id + i,
+			for (j = 1; j < (length / sizeof(uint32_t)); j++) {
+				stm32_bsec_read_permanent_lock(otp_id + j,
 							       &locked_next);
 				if (locked != locked_next) {
 					EMSG("Inconsistent status OTP id %u",
-					     otp_id + i);
+					     otp_id + j);
 					locked = true;
 					continue;
 				}
@@ -819,15 +796,14 @@ static void bsec_dt_otp_nsec_access(void *fdt, int bsec_node)
 			}
 
 		} else if (!fdt_getprop(fdt, bsec_subnode, "st,non-secure-otp",
-					NULL)) {
+				   NULL)) {
 			continue;
 		}
 
-		if ((reg_offset % sizeof(uint32_t)) ||
-		    (reg_size % sizeof(uint32_t)))
+		if ((offset % sizeof(uint32_t)) || (length % sizeof(uint32_t)))
 			panic("Unaligned non-secure OTP");
 
-		size = reg_size / sizeof(uint32_t);
+		size = length / sizeof(uint32_t);
 
 		if (otp_id + size > OTP_MAX_SIZE)
 			panic("OTP range oversized");
@@ -853,39 +829,28 @@ static void save_dt_nvmem_layout(void *fdt, int bsec_node)
 		panic();
 
 	fdt_for_each_subnode(node, fdt, bsec_node) {
-		unsigned int reg_offset = 0;
-		unsigned int reg_length = 0;
+		const fdt32_t *cuint = NULL;
 		const char *string = NULL;
 		const char *s = NULL;
 		int len = 0;
 		struct nvmem_layout *layout_cell = &nvmem_layout[cell_cnt];
-		uint32_t bits[2] = { };
 
 		string = fdt_get_name(fdt, node, &len);
 		if (!string || !len)
 			continue;
 
-		/* when absent phandle = 0 and otp_by_phandle() not possible */
-		layout_cell->phandle = fdt_get_phandle(fdt, node);
-
-		reg_offset = _fdt_reg_base_address(fdt, node);
-		reg_length = _fdt_reg_size(fdt, node);
-
-		if (reg_offset == DT_INFO_INVALID_REG ||
-		    reg_length == DT_INFO_INVALID_REG_SIZE) {
+		cuint = fdt_getprop(fdt, node, "reg", &len);
+		if (!cuint || (len != (2 * (int)sizeof(uint32_t))))  {
 			IMSG("Malformed nvmem %s: ignored", string);
 			continue;
 		}
 
-		layout_cell->otp_id = reg_offset / sizeof(uint32_t);
-		layout_cell->bit_offset = (reg_offset % sizeof(uint32_t))
-					  * CHAR_BIT;
-		layout_cell->bit_len = reg_length * CHAR_BIT;
-
-		if (!_fdt_read_uint32_array(fdt, node, "bits", bits, 2)) {
-			layout_cell->bit_offset += bits[0];
-			layout_cell->bit_len = bits[1];
+		if (fdt32_to_cpu(*cuint) % sizeof(uint32_t)) {
+			DMSG("Misaligned nvmem %s: ignored", string);
+			continue;
 		}
+		layout_cell->otp_id = fdt32_to_cpu(*cuint) / sizeof(uint32_t);
+		layout_cell->bit_len = fdt32_to_cpu(*(cuint + 1)) * CHAR_BIT;
 
 		s = strchr(string, '@');
 		if (s)
@@ -897,14 +862,12 @@ static void save_dt_nvmem_layout(void *fdt, int bsec_node)
 
 		memcpy(layout_cell->name, string, len);
 		cell_cnt++;
-		DMSG("nvmem[%d] = %s %" PRIu32 "bit offset: %zu, length: %zu",
-		     cell_cnt, layout_cell->name, layout_cell->otp_id,
-		     layout_cell->bit_offset, layout_cell->bit_len);
+		DMSG("nvmem[%d] = %s %"PRId32" %zu", cell_cnt,
+		     layout_cell->name, layout_cell->otp_id, layout_cell->bit_len);
 	}
 
 	if (cell_cnt != cell_max) {
-		nvmem_layout = realloc(nvmem_layout,
-				       cell_cnt * sizeof(*nvmem_layout));
+		nvmem_layout = realloc(nvmem_layout, cell_cnt * sizeof(*nvmem_layout));
 		if (!nvmem_layout)
 			panic();
 	}
@@ -958,7 +921,7 @@ static TEE_Result initialize_bsec(void)
 {
 	struct stm32_bsec_static_cfg cfg = { };
 
-	plat_bsec_get_static_cfg(&cfg);
+	stm32mp_get_bsec_static_cfg(&cfg);
 
 	bsec_dev.base.pa = cfg.base;
 	bsec_dev.upper_base = cfg.upper_start;

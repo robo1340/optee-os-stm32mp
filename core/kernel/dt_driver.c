@@ -130,7 +130,6 @@ TEE_Result dt_driver_register_provider(const void *fdt, int nodeoffset,
 	switch (type) {
 	case DT_DRIVER_CLK:
 	case DT_DRIVER_ADC:
-	case DT_DRIVER_RSTCTRL:
 		provider_cells = fdt_get_dt_driver_cells(fdt, nodeoffset, type);
 		if (provider_cells < 0) {
 			DMSG("Failed to find provider cells: %d",
@@ -290,20 +289,13 @@ void *dt_driver_device_from_node_idx_prop(const char *prop_name,
 	if (!prop) {
 		DMSG("Property %s missing in node %s", prop_name,
 		     fdt_get_name(fdt, nodeoffset, NULL));
-		*res = TEE_ERROR_ITEM_NOT_FOUND;
+		*res = TEE_ERROR_GENERIC;
 		return NULL;
 	}
 
 	while (idx < len) {
 		idx32 = idx / sizeof(uint32_t);
 		phandle = fdt32_to_cpu(prop[idx32]);
-		if (!phandle) {
-			if (!prop_idx)
-				break;
-			idx += sizeof(phandle);
-			prop_idx--;
-			continue;
-		}
 
 		prv = dt_driver_get_provider_by_phandle(phandle, type);
 		if (!prv) {
@@ -322,7 +314,7 @@ void *dt_driver_device_from_node_idx_prop(const char *prop_name,
 		return device_from_provider_prop(prv, prop + idx32, res);
 	}
 
-	*res = TEE_ERROR_ITEM_NOT_FOUND;
+	*res = TEE_ERROR_GENERIC;
 	return NULL;
 }
 
@@ -403,9 +395,6 @@ static TEE_Result probe_driver_node(const void *fdt,
 
 		DMSG("element: %s on node %s deferred %u time(s)", drv_name,
 		     node_name, elt->deferrals);
-		break;
-	case TEE_ERROR_NODE_DISABLED:
-		DMSG("element: %s on node %s is disabled", drv_name, node_name);
 		break;
 	default:
 		TAILQ_INSERT_HEAD(&dt_driver_failed_list, elt, link);

@@ -13,17 +13,11 @@ CFG_CORE_SE05X_DISPLAY_INFO ?= y
 CFG_CORE_SE05X_SCP03_EARLY ?= y
 # Deletes all persistent storage from the SE050 at boot
 CFG_CORE_SE05X_INIT_NVM ?= n
-# Prevents the deletion of the secure storage object holding a reference to a
-# Secure Element (SE) Non Volatile Memory object unless there is explicit
-# confirmation from the SE that the NVM object has been removed.
-CFG_CORE_SE05X_BLOCK_OBJ_DEL_ON_ERROR ?= n
 
 # I2C bus baudrate (depends on SoC)
 CFG_CORE_SE05X_BAUDRATE ?= 3400000
 # I2C bus [0..2] (depends on board)
 CFG_CORE_SE05X_I2C_BUS ?= 2
-# I2C access via REE after TEE boot
-CFG_CORE_SE05X_I2C_TRAMPOLINE ?= y
 
 # Extra stacks required to support the Plug and Trust external library
 ifeq ($(shell test $(CFG_STACK_THREAD_EXTRA) -lt 8192; echo $$?), 0)

@@ -1,6 +1,5 @@
 subdirs-$(CFG_TEE_CORE_EMBED_INTERNAL_TESTS) += tests
 
-srcs-$(CFG_ATTESTATION_PTA) += attestation.c
 srcs-$(CFG_TEE_BENCHMARK) += benchmark.c
 srcs-$(CFG_DEVICE_ENUM_PTA) += device.c
 srcs-$(CFG_TA_GPROF_SUPPORT) += gprof.c
@@ -13,8 +12,6 @@ srcs-$(CFG_SCP03_PTA) += scp03.c
 srcs-$(CFG_APDU_PTA) += apdu.c
 srcs-$(CFG_SCMI_PTA) += scmi.c
 srcs-$(CFG_HWRNG_PTA) += hwrng.c
-srcs-$(CFG_RTC_PTA) += rtc.c
 srcs-$(CFG_WITH_TUI) += tui.c
 
 subdirs-y += bcm
-subdirs-y += stm32mp

@@ -6,7 +6,6 @@
 #include <config.h>
 #include <drivers/clk.h>
 #include <drivers/clk_dt.h>
-#include <drivers/stm32_shared_io.h>
 #include <io.h>
 #include <kernel/boot.h>
 #include <kernel/delay.h>
@@ -510,9 +509,9 @@ TEE_Result clk_stm32_set_parent_by_index(struct clk *clk, size_t pidx)
 
 static bool clk_stm32_get_ignore_unused_property(void)
 {
-	int node = 0;
-	const char *prop = NULL;
-	const void *fdt = NULL;
+	int node;
+	const char *prop;
+	const void *fdt;
 
 	fdt = get_embedded_dt();
 	if (!fdt)
@@ -529,7 +528,7 @@ static bool clk_stm32_get_ignore_unused_property(void)
 	return strcmp(prop, "clk_ignore_unused") == 0;
 }
 
-int fdt_clk_stm32_parse_by_name(const void *fdt, int node, const char *name,
+int clk_stm32_parse_fdt_by_name(const void *fdt, int node, const char *name,
 				uint32_t *tab, uint32_t *nb)
 {
 	const fdt32_t *cell = NULL;
@@ -590,7 +589,6 @@ const struct clk_ops clk_fixed_clk_ops = {
 	.get_rate	= clk_fixed_get_rate,
 };
 
-#ifndef CFG_STM32MP15
 struct clk *stm32mp_rcc_clock_id_to_clk(unsigned long clock_id)
 {
 	struct clk_stm32_priv *priv = clk_stm32_get_priv();
@@ -600,7 +598,6 @@ struct clk *stm32mp_rcc_clock_id_to_clk(unsigned long clock_id)
 
 	return priv->clk_refs[clock_id];
 }
-#endif
 
 static struct clk *stm32mp_clk_dt_get_clk(struct dt_driver_phandle_args *pargs,
 					  void *data __unused, TEE_Result *res)

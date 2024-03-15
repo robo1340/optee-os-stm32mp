@@ -28,7 +28,7 @@
  * - one table for non-secure internal RAMs (PM: DDR first page)
  * - two tables for a 2MByte dynamiq shared virtual memory (SHM_VASPACE)
  */
-#define MAX_XLAT_TABLES			8
+#define MAX_XLAT_TABLES			6
 #endif /*CFG_WITH_LPAE*/
 #else
 /* Be generous with this setup that has plenty of secure RAM */
@@ -58,27 +58,23 @@
 #ifdef CFG_STM32MP13
 #define AHB5_BASE			0x54000000
 #define AHB5_SIZE			0x00008000
-#endif
-#ifdef CFG_STM32MP15
+#else
 #define AHB5_BASE			0x54000000
 #define AHB5_SIZE			0x00005000
 #endif
 
+
 /* SoC interface registers base address */
-#define ADC1_BASE			0x48003000
-#define ADC2_BASE			0x48004000
+#define MCUSRAM_BASE			0x30000000ul
+#define RETRAM_BASE			0x38000000ul
 #define BKPSRAM_BASE			0x54000000
 #define BSEC_BASE			0x5c005000
+#define ETZPC_BASE			0x5c007000
 #define CRYP1_BASE			0x54001000
 #define DBGMCU_BASE			0x50081000
-#define DCMIPP_BASE			0x5a000000
 #define DDR_BASE			0xc0000000ul
 #define DDRCTRL_BASE			0x5a003000
 #define DDRPHYC_BASE			0x5a004000
-#define ETH1_BASE			0x5800A000
-#define ETH2_BASE			0x5800E000
-#define ETZPC_BASE			0x5c007000
-#define FMC_BASE			0x58002000
 #define GIC_BASE			0xa0021000ul
 #define GPIOA_BASE			0x50002000
 #define GPIOB_BASE			0x50003000
@@ -89,36 +85,29 @@
 #define GPIOG_BASE			0x50008000
 #define GPIOH_BASE			0x50009000
 #define GPIOI_BASE			0x5000a000
+
 #ifdef CFG_STM32MP13
 #define HASH1_BASE			0x54003000
-#define I2C3_BASE			0x4c004000
-#define I2C4_BASE			0x4c005000
-#define I2C5_BASE			0x4c006000
+#define RNG1_BASE			0x54004000
+#define I2C3_BASE			0x4C004000
+#define I2C4_BASE			0x4C005000
+#define I2C5_BASE			0x4C006000
 #endif
+
 #ifdef CFG_STM32MP15
 #define GPIOJ_BASE			0x5000b000
 #define GPIOK_BASE			0x5000c000
 #define GPIOZ_BASE			0x54004000
 #define HASH1_BASE			0x54002000
+#define RNG1_BASE			0x54003000
 #define I2C4_BASE			0x5c002000
 #define I2C6_BASE			0x5c009000
 #endif
+
 #define IWDG1_BASE			0x5c003000
 #define IWDG2_BASE			0x5a002000
-#define LTDC_BASE			0x5a001000
-#define MCUSRAM_BASE			0x30000000ul
-#define MDMA_BASE			0x58000000
-#define OTG_BASE			0x49000000
 #define PWR_BASE			0x50001000
-#define QSPI_BASE			0x58003000
 #define RCC_BASE			0x50000000
-#define RETRAM_BASE			0x38000000ul
-#ifdef CFG_STM32MP13
-#define RNG1_BASE			0x54004000
-#endif
-#ifdef CFG_STM32MP15
-#define RNG1_BASE			0x54003000
-#endif
 #define RTC_BASE			0x5c004000
 #ifdef CFG_STM32MP15
 #define SPI6_BASE			0x5c001000
@@ -143,12 +132,12 @@
 #ifdef CFG_STM32MP13
 #define LPTIM2_BASE			0x50021000
 #define LPTIM3_BASE			0x50022000
-#define TIM12_BASE			0x4c007000
-#define TIM13_BASE			0x4c008000
-#define TIM14_BASE			0x4c009000
-#define TIM15_BASE			0x4c00a000
-#define TIM16_BASE			0x4c00b000
-#define TIM17_BASE			0x4c00c000
+#define TIM12_BASE			0x4C007000
+#define TIM13_BASE			0x4C008000
+#define TIM14_BASE			0x4C009000
+#define TIM15_BASE			0x4C00A000
+#define TIM16_BASE			0x4C00B000
+#define TIM17_BASE			0x4C00C000
 #endif
 #ifdef CFG_STM32MP15
 #define TIM12_BASE			0x40006000
@@ -158,14 +147,12 @@
 #define TIM16_BASE			0x44007000
 #define TIM17_BASE			0x44008000
 #endif
-#define TSC_BASE			0x5000B000
 #define TZC_BASE			0x5c006000
+#define UART1_BASE			0x5c000000
 #ifdef CFG_STM32MP13
-#define UART1_BASE			0x4c000000
 #define UART2_BASE			0x4c001000
 #endif
 #ifdef CFG_STM32MP15
-#define UART1_BASE			0x5c000000
 #define UART2_BASE			0x4000e000
 #endif
 #define UART3_BASE			0x4000f000
@@ -174,10 +161,19 @@
 #define UART6_BASE			0x44003000
 #define UART7_BASE			0x40018000
 #define UART8_BASE			0x40019000
-#define VREFBUF_BASE			0x50025000
 
-#define ROM_BASE			0
-#define ROM_SIZE			0x20000
+#define VREFBUF_BASE			0x50025000
+#define LTDC_BASE			0x5A001000
+#define DCMIPP_BASE			0x5A000000
+#define ADC1_BASE			0x48003000
+#define ADC2_BASE			0x48004000
+#define OTG_BASE			0x49000000
+#define TSC_BASE			0x5000B000
+#define MDMA_BASE			0x58000000
+#define ETH1_BASE			0x5800A000
+#define ETH2_BASE			0x5800E000
+#define FMC_BASE			0x58002000
+#define QSPI_BASE			0x58003000
 
 /* Console configuration */
 #define STM32MP1_DEBUG_USART_BASE	UART4_BASE
@@ -187,12 +183,12 @@
 #define CONSOLE_UART_SIZE		1024
 
 /* BSEC OTP resources */
-#define STM32MP1_OTP_MAX_ID		0x5FU
-#define STM32MP1_UPPER_OTP_START	0x20U
+#define STM32MP1_OTP_MAX_ID		U(0x5F)
+#define STM32MP1_UPPER_OTP_START	U(0x20)
 
-#define OTP_MAX_SIZE			(STM32MP1_OTP_MAX_ID + 1U)
+#define OTP_MAX_SIZE			(STM32MP1_OTP_MAX_ID + U(1))
 
-/* Bit map for BSEC word CFG0_OTP */
+#define CFG0_OTP				"cfg0_otp"
 #ifdef CFG_STM32MP13
 #define CFG0_OTP_BIT_LENGTH			U(16)
 #define CFG0_OTP_MODE_MASK			GENMASK_32(9, 0)
@@ -204,16 +200,33 @@
 #define CFG0_CLOSED_MASK			CFG0_CLOSED_DEVICE
 #endif
 #ifdef CFG_STM32MP15
-#define CFG0_OTP_BIT_LENGTH		U(8)
-#define CFG0_OTP_SECURED_POS		U(6)
-#define CFG0_CLOSED_MASK		BIT(CFG0_OTP_SECURED_POS)
+#define CFG0_OTP_BIT_LENGTH			U(8)
+#define CFG0_OTP_SECURED_POS			U(6)
+#define CFG0_CLOSED_MASK			BIT(CFG0_OTP_SECURED_POS)
 #endif
 
-/* Bit map for BSEC word HW2_OTP */
-#define HW2_OTP_IWDG_HW_ENABLE_SHIFT	U(3)
-#define HW2_OTP_IWDG_FZ_STOP_SHIFT	U(5)
-#define HW2_OTP_IWDG_FZ_STANDBY_SHIFT	U(7)
-#define HW2_OTP_PRODUCT_BELOW_2V5	BIT(13)
+#define HW2_OTP					"hw2_otp"
+#define HW2_OTP_IWDG_HW_ENABLE_SHIFT		U(3)
+#define HW2_OTP_IWDG_FZ_STOP_SHIFT		U(5)
+#define HW2_OTP_IWDG_FZ_STANDBY_SHIFT		U(7)
+#define HW2_OTP_PRODUCT_BELOW_2V5		BIT(13)
+
+#define PART_NUMBER_OTP				"part_number_otp"
+#define PART_NUMBER_OTP_PART_SHIFT		U(0)
+
+#ifdef CFG_STM32MP13
+#define PART_NUMBER_OTP_BIT_LENGTH		U(16)
+#define PART_NUMBER_OTP_PART_MASK		GENMASK_32(14, 0)
+#endif
+
+#ifdef CFG_STM32MP15
+#define PART_NUMBER_OTP_BIT_LENGTH		U(8)
+#define PART_NUMBER_OTP_PART_MASK		GENMASK_32(7, 0)
+#endif
+
+#define HW2_OTP_IWDG_HW_ENABLE_SHIFT		U(3)
+#define HW2_OTP_IWDG_FZ_STOP_SHIFT		U(5)
+#define HW2_OTP_IWDG_FZ_STANDBY_SHIFT		U(7)
 
 /* GIC resources */
 #define GIC_SIZE			0x2000
@@ -232,6 +245,10 @@
 
 #define STM32MP_GIC_PRIORITY_CSTOP	U(0xC0)
 
+/* IWDG resources */
+#define IWDG1_INST			U(0)
+#define IWDG2_INST			U(1)
+
 /* RCC platform resources */
 #ifdef CFG_STM32MP13
 #define RCC_WAKEUP_IT			U(154)
@@ -242,17 +259,7 @@
 #endif
 
 /* TAMP resources */
-#define TAMP_BKP_REGISTER_OFF		0x100
-#define TAMP_BKP_REGISTER_COUNT		U(32)
-
-#define TAMP_BKP_REGISTER_ZONE1_COUNT	U(10)
-#define TAMP_BKP_REGISTER_ZONE2_COUNT	U(5)
-#define TAMP_BKP_REGISTER_ZONE3_COUNT	U(17)
-
-#if (TAMP_BKP_REGISTER_ZONE1_COUNT + TAMP_BKP_REGISTER_ZONE2_COUNT + \
-	TAMP_BKP_REGISTER_ZONE3_COUNT != TAMP_BKP_REGISTER_COUNT)
-#error Inconsistent TAMP backup register zone definition
-#endif
+#define TAMP_BKP_REGISTER_OFF		U(0x100)
 
 /* USART/UART resources */
 #define USART1_BASE			UART1_BASE
@@ -284,11 +291,16 @@
 #define BKPSRAM_PM_CONTEXT_SIZE		U(0xF00)
 
 /* SYSRAM layout */
-#ifdef CFG_STM32MP15
 #define SYSRAM_SIZE			0x40000
-#endif
-#ifdef CFG_STM32MP13
-#define SYSRAM_SIZE			0x20000
+#define SYSRAM_NS_SIZE			(SYSRAM_SIZE - SYSRAM_SEC_SIZE)
+
+/* Non-secure SYSRAM must be above (higher addresses) secure SYSRAM */
+#if (CFG_STM32MP1_SCMI_SHM_BASE >= SYSRAM_BASE) && \
+	((CFG_STM32MP1_SCMI_SHM_BASE + CFG_STM32MP1_SCMI_SHM_SIZE) <= \
+	 (SYSRAM_BASE + SYSRAM_SIZE))
+#define SYSRAM_SEC_SIZE		(CFG_STM32MP1_SCMI_SHM_BASE - SYSRAM_BASE)
+#else
+#define SYSRAM_SEC_SIZE		SYSRAM_SIZE
 #endif
 
 /* RETRAM layout */
@@ -327,6 +339,7 @@
 #ifdef CFG_STM32MP13
 #define STM32MP1_CHIP_ID		U(0x501)
 #define STM32MP1_REV_A			U(0x00001000)
+#define STM32MP1_REV_Y			U(0x00001003)
 #define STM32MP1_REV_Z			U(0x00001001)
 #endif
 

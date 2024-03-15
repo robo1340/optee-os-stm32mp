@@ -637,7 +637,7 @@ static void ddr_set_sr_mode(enum stm32mp1_ddr_sr_mode mode)
 		break;
 
 	default:
-		EMSG("Unknown Self Refresh mode %d", mode);
+		EMSG("Unknown Self Refresh mode\n");
 		panic();
 	}
 }

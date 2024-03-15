@@ -9,7 +9,6 @@
 #include <keep.h>
 #include <kernel/abort.h>
 #include <kernel/stmm_sp.h>
-#include <kernel/thread_private.h>
 #include <kernel/user_mode_ctx.h>
 #include <mm/fobj.h>
 #include <mm/mobj.h>
@@ -20,6 +19,8 @@
 #include <tee/tee_svc.h>
 #include <tee/tee_svc_storage.h>
 #include <zlib.h>
+
+#include "thread_private.h"
 
 #ifdef ARM64
 #define SVC_REGS_A0(_regs)	((_regs)->x0)
@@ -88,8 +89,9 @@ static struct stmm_ctx *stmm_alloc_ctx(const TEE_UUID *uuid)
 	spc->ta_ctx.ts_ctx.uuid = *uuid;
 	spc->ta_ctx.flags = TA_FLAG_SINGLE_INSTANCE |
 			    TA_FLAG_INSTANCE_KEEP_ALIVE;
+	spc->uctx.ts_ctx = &spc->ta_ctx.ts_ctx;
 
-	res = vm_info_init(&spc->uctx, &spc->ta_ctx.ts_ctx);
+	res = vm_info_init(&spc->uctx);
 	if (res) {
 		free(spc);
 		return NULL;
@@ -165,10 +167,9 @@ static TEE_Result alloc_and_map_sp_fobj(struct stmm_ctx *spc, size_t sz,
 {
 	size_t num_pgs = ROUNDUP(sz, SMALL_PAGE_SIZE) / SMALL_PAGE_SIZE;
 	struct fobj *fobj = fobj_ta_mem_alloc(num_pgs);
+	struct mobj *mobj = mobj_with_fobj_alloc(fobj, NULL);
 	TEE_Result res = TEE_SUCCESS;
-	struct mobj *mobj = NULL;
 
-	mobj = mobj_with_fobj_alloc(fobj, NULL, TEE_MATTR_MEM_TYPE_TAGGED);
 	fobj_put(fobj);
 	if (!mobj)
 		return TEE_ERROR_OUT_OF_MEMORY;
@@ -480,6 +481,7 @@ static void stmm_ctx_destroy(struct ts_ctx *ctx)
 {
 	struct stmm_ctx *spc = to_stmm_ctx(ctx);
 
+	tee_pager_rem_um_regions(&spc->uctx);
 	vm_info_final(&spc->uctx);
 	free(spc);
 }
@@ -866,7 +868,7 @@ static bool spm_handle_svc(struct thread_svc_regs *regs)
  * Note: this variable is weak just to ease breaking its dependency chain
  * when added to the unpaged area.
  */
-const struct ts_ops stmm_sp_ops __weak __relrodata_unpaged("stmm_sp_ops") = {
+const struct ts_ops stmm_sp_ops __weak __rodata_unpaged("stmm_sp_ops") = {
 	.enter_open_session = stmm_enter_open_session,
 	.enter_invoke_cmd = stmm_enter_invoke_cmd,
 	.enter_close_session = stmm_enter_close_session,

@@ -34,12 +34,9 @@ ta-mk-file-export-vars-$(sm) += CFG_FTRACE_SUPPORT
 ta-mk-file-export-vars-$(sm) += CFG_UNWIND
 ta-mk-file-export-vars-$(sm) += CFG_TA_MCOUNT
 ta-mk-file-export-vars-$(sm) += CFG_TA_BTI
-ta-mk-file-export-vars-$(sm) += CFG_TA_PAUTH
 ta-mk-file-export-vars-$(sm) += CFG_CORE_TPM_EVENT_LOG
 ta-mk-file-export-add-$(sm) += CFG_TEE_TA_LOG_LEVEL ?= $(CFG_TEE_TA_LOG_LEVEL)_nl_
 ta-mk-file-export-vars-$(sm) += CFG_TA_BGET_TEST
-ta-mk-file-export-vars-$(sm) += CFG_ATTESTATION_PTA
-ta-mk-file-export-vars-$(sm) += CFG_MEMTAG
 ta-mk-file-export-vars-$(sm) += CFG_WITH_TUI
 
 # Expand platform flags here as $(sm) will change if we have several TA
@@ -130,10 +127,7 @@ incfiles-extra-host += core/include/signed_hdr.h
 ifeq ($(ta-target),ta_arm32)
 incfiles-extra-host += $(out-dir)/include/generated/arm32_user_sysreg.h
 endif
-ifeq ($(CFG_SPMC_TESTS),y)
-incfiles-extra-host += core/arch/arm/include/ffa.h
-incfiles-extra-host += core/arch/arm/include/smccc.h
-endif
+
 #
 # Copy lib files and exported headers from each lib
 #

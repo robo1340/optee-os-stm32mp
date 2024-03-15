@@ -36,7 +36,6 @@
 #include "mbedtls/ssl_internal.h"
 #include "mbedtls/error.h"
 #include "mbedtls/platform_util.h"
-#include "mbedtls/constant_time.h"
 
 #include <string.h>
 
@@ -63,7 +62,7 @@
 
 /*
  * Cookies are formed of a 4-bytes timestamp (or serial number) and
- * an HMAC of timestamp and client ID.
+ * an HMAC of timestemp and client ID.
  */
 #define COOKIE_LEN      ( 4 + COOKIE_HMAC_LEN )
 
@@ -122,7 +121,6 @@ int mbedtls_ssl_cookie_setup( mbedtls_ssl_cookie_ctx *ctx,
 /*
  * Generate the HMAC part of a cookie
  */
-MBEDTLS_CHECK_RETURN_CRITICAL
 static int ssl_cookie_hmac( mbedtls_md_context_t *hmac_ctx,
                             const unsigned char time[4],
                             unsigned char **p, unsigned char *end,
@@ -168,7 +166,10 @@ int mbedtls_ssl_cookie_write( void *p_ctx,
     t = ctx->serial++;
 #endif
 
-    MBEDTLS_PUT_UINT32_BE(t, *p, 0);
+    (*p)[0] = (unsigned char)( t >> 24 );
+    (*p)[1] = (unsigned char)( t >> 16 );
+    (*p)[2] = (unsigned char)( t >>  8 );
+    (*p)[3] = (unsigned char)( t       );
     *p += 4;
 
 #if defined(MBEDTLS_THREADING_C)
@@ -219,20 +220,15 @@ int mbedtls_ssl_cookie_check( void *p_ctx,
 
 #if defined(MBEDTLS_THREADING_C)
     if( mbedtls_mutex_unlock( &ctx->mutex ) != 0 )
-    {
-        ret = MBEDTLS_ERROR_ADD( MBEDTLS_ERR_SSL_INTERNAL_ERROR,
-                                 MBEDTLS_ERR_THREADING_MUTEX_ERROR );
-    }
+        return( MBEDTLS_ERROR_ADD( MBEDTLS_ERR_SSL_INTERNAL_ERROR,
+                MBEDTLS_ERR_THREADING_MUTEX_ERROR ) );
 #endif
 
     if( ret != 0 )
-        goto exit;
+        return( ret );
 
-    if( mbedtls_ct_memcmp( cookie + 4, ref_hmac, sizeof( ref_hmac ) ) != 0 )
-    {
-        ret = -1;
-        goto exit;
-    }
+    if( mbedtls_ssl_safer_memcmp( cookie + 4, ref_hmac, sizeof( ref_hmac ) ) != 0 )
+        return( -1 );
 
 #if defined(MBEDTLS_HAVE_TIME)
     cur_time = (unsigned long) mbedtls_time( NULL );
@@ -246,13 +242,8 @@ int mbedtls_ssl_cookie_check( void *p_ctx,
                   ( (unsigned long) cookie[3]       );
 
     if( ctx->timeout != 0 && cur_time - cookie_time > ctx->timeout )
-    {
-        ret = -1;
-        goto exit;
-    }
+        return( -1 );
 
-exit:
-    mbedtls_platform_zeroize( ref_hmac, sizeof( ref_hmac ) );
-    return( ret );
+    return( 0 );
 }
 #endif /* MBEDTLS_SSL_COOKIE_C */

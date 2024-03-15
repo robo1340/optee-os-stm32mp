@@ -230,6 +230,28 @@ int stpmic1_register_read(uint8_t register_id, uint8_t *value);
 int stpmic1_register_write(uint8_t register_id, uint8_t value);
 int stpmic1_register_update(uint8_t register_id, uint8_t value, uint8_t mask);
 
+/* API for gating of regulators driven from STPMIC1 device */
+bool stpmic1_regulator_is_valid(const char *name);
+int stpmic1_regulator_enable(const char *name);
+int stpmic1_regulator_disable(const char *name);
+bool stpmic1_is_regulator_enabled(const char *name);
+
+TEE_Result stpmic1_regulator_levels_mv(const char *name,
+				       const uint16_t **levels,
+				       size_t *levels_count);
+
+/* API for voltage cnotrol of regulators driven from STPMIC1 device */
+int stpmic1_regulator_voltage_set(const char *name, uint16_t millivolts);
+int stpmic1_regulator_voltage_get(const char *name);
+int stpmic1_regulator_pull_down_set(const char *name);
+int stpmic1_regulator_mask_reset_set(const char *name);
+
+/* LDOx specific configurations */
+int stpmic1_regulator_icc_set(const char *name);
+int stpmic1_regulator_sink_mode_set(const char *name);
+int stpmic1_regulator_bypass_mode_set(const char *name);
+int stpmic1_active_discharge_mode_set(const char *name);
+
 /* API for low power configuration of regulators driven from STPMIC1 device */
 bool stpmic1_regu_has_lp_cfg(const char *name);
 int stpmic1_lp_copy_reg(const char *name);

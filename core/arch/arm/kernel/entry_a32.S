@@ -11,11 +11,12 @@
 #include <keep.h>
 #include <kernel/asan.h>
 #include <kernel/cache_helpers.h>
-#include <kernel/thread_private.h>
 #include <platform_config.h>
 #include <sm/optee_smc.h>
 #include <sm/teesmc_opteed.h>
 #include <sm/teesmc_opteed_macros.h>
+
+#include "thread_private.h"
 
 .arch_extension sec
 
@@ -270,20 +271,13 @@ DECLARE_KEEP_INIT _start
 
 	/*
 	 * Setup sp to point to the top of the tmp stack for the current CPU:
-	 * sp is assigned:
-	 *   stack_tmp + (cpu_id + 1) * stack_tmp_stride - STACK_TMP_GUARD
+	 * sp is assigned stack_tmp_export + cpu_id * stack_tmp_stride
 	 */
 	.macro set_sp
 		bl	__get_core_pos
 		cmp	r0, #CFG_TEE_CORE_NB_CORE
 		/* Unsupported CPU, park it before it breaks something */
 		bge	unhandled_cpu
-		add	r0, r0, #1
-
-		/* r2 = stack_tmp - STACK_TMP_GUARD */
-		adr	r3, stack_tmp_rel
-		ldr	r2, [r3]
-		add	r2, r2, r3
 
 		/*
 		 * stack_tmp_stride and stack_tmp_stride_rel are the
@@ -300,10 +294,15 @@ DECLARE_KEEP_INIT _start
 		ldr	r1, [r3]
 		ldr	r1, [r1, r3]
 
+		/* Same pattern as for stack_tmp_stride above */
+		adr	r3, stack_tmp_export_rel
+		ldr	r2, [r3]
+		ldr	r2, [r2, r3]
+
 		/*
-		 * r0 is core pos + 1
+		 * r0 is core pos
 		 * r1 is value of stack_tmp_stride
-		 * r2 is value of stack_tmp + guard
+		 * r2 is value of stack_tmp_export
 		 */
 		mul	r1, r0, r1
 		add	sp, r1, r2
@@ -607,7 +606,7 @@ shadow_stack_access_ok:
 	 */
 	ldr	r1, boot_mmu_config + CORE_MMU_CONFIG_LOAD_OFFSET
 	sub	r0, r0, r1
-	bl	thread_spmc_register_secondary_ep
+	bl	ffa_secondary_cpu_ep_register
 	b	thread_ffa_msg_wait
 #else /* CFG_CORE_FFA */
 
@@ -627,8 +626,7 @@ shadow_stack_access_ok:
 
 	mov	r0, #TEESMC_OPTEED_RETURN_ENTRY_DONE
 	smc	#0
-	/* SMC should not return */
-	panic_at_smc_return
+	b	.	/* SMC should not return */
 #endif /* CFG_CORE_FFA */
 END_FUNC reset_primary
 
@@ -825,9 +823,9 @@ LOCAL_FUNC enable_mmu , : , .identity_map
 	bx	lr
 END_FUNC enable_mmu
 
-LOCAL_DATA stack_tmp_rel , :
-	.word	stack_tmp - stack_tmp_rel - STACK_TMP_GUARD
-END_DATA stack_tmp_rel
+LOCAL_DATA stack_tmp_export_rel , :
+	.word	stack_tmp_export - stack_tmp_export_rel
+END_DATA stack_tmp_export_rel
 
 LOCAL_DATA stack_tmp_stride_rel , :
 	.word	stack_tmp_stride - stack_tmp_stride_rel
@@ -878,6 +876,17 @@ UNWIND(	.cantunwind)
 	wait_primary
 
 	set_sp
+#ifdef CFG_CORE_ASLR
+	/*
+	 * stack_tmp_export which is used as base when initializing sp has
+	 * been relocated to the new offset. Since MMU isn't enabled on
+	 * this CPU yet we need to restore the corresponding physical
+	 * address.
+	 */
+	adr	r0, boot_mmu_config
+	ldr	r0, [r0, #CORE_MMU_CONFIG_LOAD_OFFSET]
+	sub	sp, sp, r0
+#endif
 
 #if defined (CFG_BOOT_SECONDARY_REQUEST)
 	/* if L1 is not invalidated before, do it here */
@@ -909,8 +918,7 @@ UNWIND(	.cantunwind)
 	mov	r3, #0
 	mov	r4, #0
 	smc	#0
-	/* SMC should not return */
-	panic_at_smc_return
+	b	.	/* SMC should not return */
 END_FUNC reset_secondary
 DECLARE_KEEP_PAGER reset_secondary
 #endif /* defined(CFG_WITH_ARM_TRUSTED_FW) */

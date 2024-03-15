@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 /*
- * Copyright (c) 2017-2022, STMicroelectronics
+ * Copyright (c) 2017-2018, STMicroelectronics
  * Copyright (c) 2016-2018, Linaro Limited
  */
 
@@ -9,20 +9,26 @@
 #include <console.h>
 #include <drivers/counter.h>
 #include <drivers/gic.h>
-#include <drivers/stm32_bsec.h>
+#include <drivers/regulator.h>
 #include <drivers/stm32_etzpc.h>
 #include <drivers/stm32_firewall.h>
+#include <drivers/stm32_iwdg.h>
 #include <drivers/stm32_rtc.h>
 #include <drivers/stm32_tamp.h>
 #include <drivers/stm32_uart.h>
 #include <drivers/stm32mp_dt_bindings.h>
+#include <drivers/stm32mp1_pmic.h>
+#include <drivers/stpmic1.h>
 #include <io.h>
+#include <libfdt.h>
 #include <kernel/boot.h>
 #include <kernel/dt.h>
 #include <kernel/interrupt.h>
 #include <kernel/misc.h>
 #include <kernel/panic.h>
 #include <kernel/spinlock.h>
+#include <kernel/tee_misc.h>
+#include <libfdt.h>
 #include <mm/core_memprot.h>
 #include <platform_config.h>
 #include <sm/psci.h>
@@ -42,13 +48,21 @@ register_phys_mem_pgdir(MEM_AREA_IO_SEC, APB4_BASE, APB4_SIZE);
 register_phys_mem_pgdir(MEM_AREA_IO_SEC, APB5_BASE, APB5_SIZE);
 #ifdef CFG_STM32MP13
 register_phys_mem_pgdir(MEM_AREA_IO_SEC, APB6_BASE, APB6_SIZE);
-#endif
 register_phys_mem_pgdir(MEM_AREA_IO_SEC, AHB2_BASE, AHB2_SIZE);
+#endif
 register_phys_mem_pgdir(MEM_AREA_IO_SEC, AHB4_BASE, AHB4_SIZE);
 register_phys_mem_pgdir(MEM_AREA_IO_SEC, AHB5_BASE, AHB5_SIZE);
 register_phys_mem_pgdir(MEM_AREA_IO_SEC, GIC_BASE, GIC_SIZE);
 
 register_ddr(DDR_BASE, CFG_DRAM_SIZE);
+
+#ifdef CFG_RPROC_PTA
+/* Map MCU RETRAM as read write for Cortex-M4 firmware management */
+register_phys_mem(MEM_AREA_IO_SEC, RETRAM_BASE, RETRAM_SIZE);
+
+/* Map MCU SRAM as read write for Cortex-M4 firmware management */
+register_phys_mem(MEM_AREA_IO_SEC, MCUSRAM_BASE, MCUSRAM_SIZE);
+#endif
 
 /* Map non-secure DDR bottom for the low power sequence */
 register_phys_mem(MEM_AREA_RAM_NSEC, DDR_BASE, SMALL_PAGE_SIZE);
@@ -56,12 +70,6 @@ register_phys_mem(MEM_AREA_RAM_NSEC, DDR_BASE, SMALL_PAGE_SIZE);
 #ifdef CFG_STM32MP15
 /* Map TEE physical RAM as read-only for content storage when suspending */
 register_phys_mem(MEM_AREA_ROM_SEC, TEE_RAM_START, TEE_RAM_PH_SIZE);
-
-/* Map MCU RETRAM as read write for Cortex-M4 firmware management */
-register_phys_mem(MEM_AREA_IO_SEC, RETRAM_BASE, RETRAM_SIZE);
-
-/* Map MCU SRAM as read write for Cortex-M4 firmware management */
-register_phys_mem(MEM_AREA_IO_SEC, MCUSRAM_BASE, MCUSRAM_SIZE);
 #endif /* CFG_STM32MP15 */
 
 #define _ID2STR(id)		(#id)
@@ -227,7 +235,9 @@ void itr_core_handler(void)
 
 void main_init_gic(void)
 {
-	gic_init(&gic_data, GIC_BASE + GICC_OFFSET, GIC_BASE + GICD_OFFSET);
+	assert(cpu_mmu_enabled());
+
+	gic_init(&gic_data, get_gicc_base(), get_gicd_base());
 	itr_init(&gic_data.chip);
 
 	stm32mp_register_online_cpu();
@@ -239,36 +249,6 @@ void main_secondary_init_gic(void)
 
 	stm32mp_register_online_cpu();
 }
-
-#define ARM_CNTXCTL_IMASK	BIT(1)
-
-static void stm32mp_mask_timer(void)
-{
-	/* Mask timer interrupts */
-	write_cntp_ctl(read_cntp_ctl() | ARM_CNTXCTL_IMASK);
-	write_cntv_ctl(read_cntv_ctl() | ARM_CNTXCTL_IMASK);
-}
-
-/* SGI9 (secure SGI 1) informs targeted CPU it shall reset */
-static enum itr_return sgi9_it_handler(struct itr_handler *hdl  __unused)
-{
-	DMSG("Halting CPU %u", get_core_pos());
-
-	stm32mp_mask_timer();
-
-	stm32mp_dump_core_registers(true);
-
-	while (true)
-		cpu_idle();
-
-	return ITRR_HANDLED;
-}
-
-static struct itr_handler sgi9_reset_handler = {
-	.it = GIC_SEC_SGI_1,
-	.handler = sgi9_it_handler,
-};
-DECLARE_KEEP_PAGER(sgi9_reset_handler);
 
 static TEE_Result init_stm32mp1_drivers(void)
 {
@@ -282,28 +262,17 @@ static TEE_Result init_stm32mp1_drivers(void)
 	if (!IS_ENABLED(CFG_EMBED_DTB))
 		stm32_etzpc_init(ETZPC_BASE);
 
-	res = stm32_firewall_set_config(ROM_BASE, ROM_SIZE, sec_cfg);
-	if (res)
-		panic("Unable to secure ROM");
+	COMPILE_TIME_ASSERT(((SYSRAM_BASE + SYSRAM_SIZE) <= CFG_TZSRAM_START) ||
+			    ((SYSRAM_BASE <= CFG_TZSRAM_START) &&
+			     (SYSRAM_SEC_SIZE >= CFG_TZSRAM_SIZE)));
 
-	res = stm32_firewall_set_config(SYSRAM_BASE, SYSRAM_SIZE, sec_cfg);
+	res = stm32_firewall_set_config(SYSRAM_BASE, SYSRAM_SEC_SIZE, sec_cfg);
 	if (res)
 		panic("Unable to secure SYSRAM");
 
-	itr_add(&sgi9_reset_handler);
-	itr_enable(sgi9_reset_handler.it);
-
 	return TEE_SUCCESS;
 }
-
 driver_init_late(init_stm32mp1_drivers);
-
-vaddr_t stm32_rcc_base(void)
-{
-	static struct io_pa_va base = { .pa = RCC_BASE };
-
-	return io_pa_or_va_secure(&base, 1);
-}
 
 vaddr_t get_gicc_base(void)
 {
@@ -319,7 +288,7 @@ vaddr_t get_gicd_base(void)
 	return io_pa_or_va_secure(&base, 1);
 }
 
-void plat_bsec_get_static_cfg(struct stm32_bsec_static_cfg *cfg)
+void stm32mp_get_bsec_static_cfg(struct stm32_bsec_static_cfg *cfg)
 {
 	cfg->base = BSEC_BASE;
 	cfg->upper_start = STM32MP1_UPPER_OTP_START;
@@ -378,100 +347,6 @@ vaddr_t stm32mp_stgen_base(void)
 	return io_pa_or_va(&base, 1);
 }
 
-#if TRACE_LEVEL >= TRACE_DEBUG
-static const char *const dump_table[] = {
-	"usr_sp",
-	"usr_lr",
-	"irq_spsr",
-	"irq_sp",
-	"irq_lr",
-	"fiq_spsr",
-	"fiq_sp",
-	"fiq_lr",
-	"svc_spsr",
-	"svc_sp",
-	"svc_lr",
-	"abt_spsr",
-	"abt_sp",
-	"abt_lr",
-	"und_spsr",
-	"und_sp",
-	"und_lr",
-#ifdef CFG_SM_NO_CYCLE_COUNTING
-	"pmcr"
-#endif
-};
-
-void stm32mp_dump_core_registers(bool panicking)
-{
-	static bool display = false;
-	size_t i = U(0);
-	uint32_t __maybe_unused *reg = NULL;
-	struct sm_nsec_ctx *sm_nsec_ctx = sm_get_nsec_ctx();
-
-	if (panicking)
-		display = true;
-
-	if (!display)
-		return;
-
-	MSG("CPU : %zu\n", get_core_pos());
-
-	reg = (uint32_t *)&sm_nsec_ctx->ub_regs.usr_sp;
-	for (i = U(0); i < ARRAY_SIZE(dump_table); i++)
-		MSG("%10s : 0x%08x\n", dump_table[i], reg[i]);
-}
-DECLARE_KEEP_PAGER(stm32mp_dump_core_registers);
-#endif
-
-void __noreturn plat_panic(void)
-{
-	stm32mp_mask_timer();
-
-	if (stm32mp_supports_second_core()) {
-		uint32_t target_mask = 0;
-
-		if (get_core_pos() == 0)
-			target_mask = TARGET_CPU1_GIC_MASK;
-		else
-			target_mask = TARGET_CPU0_GIC_MASK;
-
-		itr_raise_sgi(GIC_SEC_SGI_1, target_mask);
-	}
-
-	stm32mp_dump_core_registers(true);
-
-	while (true)
-		cpu_idle();
-}
-
-#ifdef CFG_TEE_CORE_DEBUG
-static TEE_Result init_debug(void)
-{
-	TEE_Result res = TEE_SUCCESS;
-	uint32_t conf = stm32_bsec_read_debug_conf();
-	struct clk *dbg_clk = stm32mp_rcc_clock_id_to_clk(CK_DBG);
-	uint32_t state = 0;
-
-	res = stm32_bsec_get_state(&state);
-	if (res)
-		return res;
-
-	if (state != BSEC_STATE_SEC_CLOSED && conf) {
-		if (IS_ENABLED(CFG_WARN_INSECURE))
-			IMSG("WARNING: All debug access are allowed");
-
-		res = stm32_bsec_write_debug_conf(conf | BSEC_DEBUG_ALL);
-
-		/* Enable DBG as used to access coprocessor debug registers */
-		clk_enable(dbg_clk);
-	}
-
-	return res;
-}
-early_init_late(init_debug);
-#endif
-
 static int get_chip_dev_id(uint32_t *dev_id)
 {
 #ifdef CFG_STM32MP13
@@ -500,14 +375,18 @@ static int get_part_number(uint32_t *part_nb)
 	if (get_chip_dev_id(&dev_id) < 0)
 		return -1;
 
-	if (stm32_bsec_find_otp_in_nvmem_layout("part_number_otp",
-						&otp, NULL, &bit_len))
+	if (stm32_bsec_find_otp_in_nvmem_layout(PART_NUMBER_OTP,
+						&otp, &bit_len))
 		return -1;
+
+	if (bit_len != PART_NUMBER_OTP_BIT_LENGTH)
+		panic();
 
 	if (stm32_bsec_read_otp(&part_number, otp))
 		return -1;
 
-	part_number = (part_number & GENMASK_32(bit_len, 0));
+	part_number = (part_number & PART_NUMBER_OTP_PART_MASK) >>
+		      PART_NUMBER_OTP_PART_SHIFT;
 
 	part_number = part_number | (dev_id << 16);
 
@@ -622,67 +501,128 @@ bool stm32mp_supports_second_core(void)
 	}
 }
 
-#ifdef CFG_STM32_HSE_MONITORING
-/* pourcent rate of hse alarm */
-#define HSE_ALARM_PERCENT	110
-#define FREQ_MONITOR_COMPAT	"st,freq-monitor"
-
-static void stm32_hse_over_frequency(uint32_t ticks __unused,
-				     void *user_data __unused)
+static unsigned int stm32mp_iwdg_iomem2instance(paddr_t pbase)
 {
-	EMSG("HSE over frequency: nb ticks:%"PRIu32, ticks);
+	DMSG("Base %lx", pbase);
+
+	switch (pbase) {
+	case IWDG1_BASE:
+		return IWDG1_INST;
+	case IWDG2_BASE:
+		return IWDG2_INST;
+	default:
+		panic();
+	}
 }
-DECLARE_KEEP_PAGER(stm32_hse_over_frequency);
 
-static TEE_Result stm32_hse_monitoring(void)
+unsigned long stm32_get_iwdg_otp_config(vaddr_t pbase)
 {
-	struct clk *hse_clk = stm32mp_rcc_clock_id_to_clk(CK_HSE);
-	struct clk *hsi_clk = stm32mp_rcc_clock_id_to_clk(CK_HSI);
-	unsigned long hse = 0;
-	unsigned long hsi_cal = 0;
-	struct counter_device *counter;
-	uint32_t ticks = 0;
-	void *fdt = NULL;
-	void *config = NULL;
-	int node = 0;
+	unsigned int idx = 0;
+	unsigned long iwdg_cfg = 0;
+	uint32_t otp_id = 0;
+	size_t bit_len = 0;
+	uint32_t otp_value = 0;
 
-	DMSG("HSE monitoring");
+	idx = stm32mp_iwdg_iomem2instance(pbase);
 
-	fdt = get_embedded_dt();
-	node = fdt_node_offset_by_compatible(fdt, 0, FREQ_MONITOR_COMPAT);
-	if (node < 0)
+	if (stm32_bsec_find_otp_in_nvmem_layout(HW2_OTP, &otp_id, &bit_len))
 		panic();
 
-	if (_fdt_get_status(fdt, node) == DT_STATUS_DISABLED)
-		return TEE_SUCCESS;
+	if (bit_len != 32)
+		panic();
 
-	hse = clk_get_rate(hse_clk);
-	hsi_cal = clk_get_rate(hsi_clk);
-	/*
-	 * hsi_cal is based on hsi & DIVISOR
-	 * DIVISOR is fixed, (stm32mp13:1024)
-	 */
-	hsi_cal /= 1024;
+	if (stm32_bsec_read_otp(&otp_value, otp_id))
+		panic();
 
-	ticks = (hse / 100) * HSE_ALARM_PERCENT;
-	ticks /= hsi_cal;
+	if (otp_value & BIT(idx + HW2_OTP_IWDG_HW_ENABLE_SHIFT))
+		iwdg_cfg |= IWDG_HW_ENABLED;
 
-	DMSG("HSE:%luHz HSI cal:%luHz alarm:%"PRIu32, hse, hsi_cal, ticks);
+	if (otp_value & BIT(idx + HW2_OTP_IWDG_FZ_STOP_SHIFT))
+		iwdg_cfg |= IWDG_DISABLE_ON_STOP;
 
-	counter = fdt_counter_get(fdt, node, &config);
-	assert(counter && config);
+	if (otp_value & BIT(idx + HW2_OTP_IWDG_FZ_STANDBY_SHIFT))
+		iwdg_cfg |= IWDG_DISABLE_ON_STANDBY;
 
-	counter->alarm.callback = stm32_hse_over_frequency;
-	counter->alarm.ticks = ticks;
-
-	counter_start(counter, config);
-	counter_set_alarm(counter);
-
-	return TEE_SUCCESS;
+	return iwdg_cfg;
 }
 
-driver_init_late(stm32_hse_monitoring);
-#endif /* CFG_STM32_HSE_MONITORING */
+#if TRACE_LEVEL >= TRACE_DEBUG
+static const char *const dump_table[] = {
+	"usr_sp",
+	"usr_lr",
+	"irq_spsr",
+	"irq_sp",
+	"irq_lr",
+	"fiq_spsr",
+	"fiq_sp",
+	"fiq_lr",
+	"svc_spsr",
+	"svc_sp",
+	"svc_lr",
+	"abt_spsr",
+	"abt_sp",
+	"abt_lr",
+	"und_spsr",
+	"und_sp",
+	"und_lr",
+#ifdef CFG_SM_NO_CYCLE_COUNTING
+	"pmcr"
+#endif
+};
+
+void stm32mp_dump_core_registers(bool panicking)
+{
+	static bool display;
+	size_t i = 0U;
+	uint32_t __maybe_unused *reg = NULL;
+	struct sm_nsec_ctx *sm_nsec_ctx = sm_get_nsec_ctx();
+
+	if (panicking)
+		display = true;
+
+	if (!display)
+		return;
+
+	MSG("CPU : %i\n", get_core_pos());
+
+	reg = (uint32_t *)&sm_nsec_ctx->ub_regs.usr_sp;
+	for (i = 0U; i < ARRAY_SIZE(dump_table); i++)
+		MSG("%10s : 0x%08x\n", dump_table[i], reg[i]);
+
+	MSG("%10s : %#08x", "mon_lr", sm_nsec_ctx->mon_lr);
+	MSG("%10s : %#08x", "mon_spsr", sm_nsec_ctx->mon_spsr);
+}
+DECLARE_KEEP_PAGER(stm32mp_dump_core_registers);
+#endif
+
+static TEE_Result init_debug(void)
+{
+	TEE_Result res = TEE_SUCCESS;
+	uint32_t conf = stm32_bsec_read_debug_conf();
+	struct clk *dbg_clk = stm32mp_rcc_clock_id_to_clk(CK_DBG);
+	uint32_t state = 0;
+
+	res = stm32_bsec_get_state(&state);
+	if (res)
+		return res;
+
+	if (state != BSEC_STATE_SEC_CLOSED && conf) {
+#ifdef CFG_TEE_CORE_DEBUG
+		if (IS_ENABLED(CFG_WARN_INSECURE))
+			IMSG("WARNING: All debug access are allowed");
+
+		res = stm32_bsec_write_debug_conf(conf | BSEC_DEBUG_ALL);
+#else
+		res = stm32_bsec_write_debug_conf(conf | BSEC_DBGSWGEN);
+#endif
+
+		/* Enable DBG as used to access coprocessor debug registers */
+		clk_enable(dbg_clk);
+	}
+
+	return res;
+}
+early_init_late(init_debug);
 
 #ifdef CFG_STM32_TAMP
 
@@ -708,7 +648,7 @@ static const char * const itamper_name[] = {
 #endif
 DECLARE_KEEP_PAGER(itamper_name);
 
-static uint32_t __unused stm32mp1_itamper_action(int id)
+static uint32_t stm32mp1_itamper_action(int id __maybe_unused)
 {
 	const char __maybe_unused *tamp_name = NULL;
 
@@ -788,4 +728,66 @@ static TEE_Result stm32_configure_tamp(void)
 }
 
 driver_init_late(stm32_configure_tamp);
-#endif /* CFG_STM32_TAMP */
+#endif
+
+#ifdef CFG_STM32_HSE_MONITORING
+/* pourcent rate of hse alarm */
+#define HSE_ALARM_PERCENT	110
+#define FREQ_MONITOR_COMPAT	"st,freq-monitor"
+
+static void stm32_hse_over_frequency(uint32_t ticks __unused,
+				     void *user_data __unused)
+{
+	EMSG("HSE over frequency: nb ticks:%"PRIu32, ticks);
+}
+DECLARE_KEEP_PAGER(stm32_hse_over_frequency);
+
+static TEE_Result stm32_hse_monitoring(void)
+{
+	struct clk *hse_clk = stm32mp_rcc_clock_id_to_clk(CK_HSE);
+	struct clk *hsi_clk = stm32mp_rcc_clock_id_to_clk(CK_HSI);
+	unsigned long hse = 0;
+	unsigned long hsi_cal = 0;
+	struct counter_device *counter;
+	uint32_t ticks = 0;
+	void *fdt = NULL;
+	void *config = NULL;
+	int node = 0;
+
+	DMSG("HSE monitoring");
+
+	fdt = get_embedded_dt();
+	node = fdt_node_offset_by_compatible(fdt, 0, FREQ_MONITOR_COMPAT);
+	if (node < 0)
+		panic();
+
+	if (_fdt_get_status(fdt, node) == DT_STATUS_DISABLED)
+		return TEE_SUCCESS;
+
+	hse = clk_get_rate(hse_clk);
+	hsi_cal = clk_get_rate(hsi_clk);
+	/*
+	 * hsi_cal is based on hsi & DIVISOR
+	 * DIVISOR is fixed, (stm32mp13:1024)
+	 */
+	hsi_cal /= 1024;
+
+	ticks = (hse / 100) * HSE_ALARM_PERCENT;
+	ticks /= hsi_cal;
+
+	DMSG("HSE:%luHz HSI cal:%luHz alarm:%"PRIu32, hse, hsi_cal, ticks);
+
+	counter = fdt_counter_get(fdt, node, &config);
+	assert(counter && config);
+
+	counter->alarm.callback = stm32_hse_over_frequency;
+	counter->alarm.ticks = ticks;
+
+	counter_start(counter, config);
+	counter_set_alarm(counter);
+
+	return TEE_SUCCESS;
+}
+
+driver_init_late(stm32_hse_monitoring);
+#endif /* CFG_STM32_HSE_MONITORING */

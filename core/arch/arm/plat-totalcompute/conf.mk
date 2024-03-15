@@ -1,4 +1,4 @@
-ifneq (,$(filter ${PLATFORM_FLAVOR},tc0 tc1 tc2))
+ifneq (,$(filter ${PLATFORM_FLAVOR},tc0 tc1))
 include core/arch/arm/cpu/cortex-armv8-0.mk
 platform-debugger-arm := 1
 endif
@@ -16,6 +16,7 @@ $(call force,CFG_PL011,y)
 $(call force,CFG_PM_STUBS,y)
 $(call force,CFG_SECURE_TIME_SOURCE_CNTPCT,y)
 $(call force,CFG_ARM64_core,y)
+$(call force,CFG_WITH_LPAE,y)
 
 ifeq ($(platform-debugger-arm),1)
 # ARM debugger needs this
@@ -25,7 +26,7 @@ endif
 
 $(call force,CFG_CORE_ARM64_PA_BITS,40)
 
-ifneq (,$(filter ${PLATFORM_FLAVOR},tc0 tc1 tc2))
+ifneq (,$(filter ${PLATFORM_FLAVOR},tc0 tc1))
 CFG_TEE_CORE_NB_CORE = 8
 
 ifeq ($(CFG_CORE_SEL1_SPMC),y)

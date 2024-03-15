@@ -7,9 +7,9 @@
 #include <drivers/regulator.h>
 #include <drivers/scmi-msg.h>
 #include <drivers/scmi.h>
+#include <drivers/scmi_regulator_consumer.h>
 #include <initcall.h>
 #include <kernel/boot.h>
-#include <kernel/dt.h>
 #include <kernel/panic.h>
 #include <libfdt.h>
 #include <malloc.h>
@@ -120,8 +120,8 @@ int32_t plat_scmi_voltd_levels_array(unsigned int channel_id,
 	return SCMI_SUCCESS;
 }
 
-int32_t plat_scmi_voltd_get_level(unsigned int channel_id,
-				  unsigned int domain_id, long *level)
+long plat_scmi_voltd_get_level(unsigned int channel_id,
+			       unsigned int domain_id)
 {
 	struct scmi_voltd *voltd = voltd_from_id(channel_id, domain_id);
 	uint16_t level_mv = 0;
@@ -137,9 +137,7 @@ int32_t plat_scmi_voltd_get_level(unsigned int channel_id,
 	VERBOSE_VOLTD(channel_id, domain_id, "get voltage = %lduV",
 		      (long)level_mv * 1000);
 
-	*level = (long)level_mv * 1000;
-
-	return SCMI_SUCCESS;
+	return (long)level_mv * 1000;
 }
 
 int32_t plat_scmi_voltd_set_level(unsigned int channel_id,
@@ -230,6 +228,8 @@ static TEE_Result scmi_regulator_consumer_init(void)
 	int node = 0;
 	int subnode = 0;
 	void *fdt = NULL;
+	bool using_reg = false;
+	bool using_name = false;
 	const fdt32_t *cuint = NULL;
 	unsigned int channel_id = 0;
 	struct scmi_voltd_channel *chan = NULL;
@@ -243,11 +243,17 @@ static TEE_Result scmi_regulator_consumer_init(void)
 	if (node < 0)
 		return TEE_SUCCESS;
 
-	/* Currently supports a single device */
+	/*
+	 * Currently supports a single device
+	 * TODO: add a reference to the SCMI agent/channel
+	 */
 	if (fdt_node_offset_by_compatible(fdt, node,
 					  "st,scmi-regulator-consumer") !=
 	    -FDT_ERR_NOTFOUND)
 		panic();
+
+	if (node < 0)
+		return TEE_SUCCESS;
 
 	cuint = fdt_getprop(fdt, node, "scmi-channel-id", NULL);
 	if (!cuint) {
@@ -264,43 +270,63 @@ static TEE_Result scmi_regulator_consumer_init(void)
 	chan = voltd_channel;
 	chan->channel_id = channel_id;
 
-	/* Compute the number of domains to allocate */
-	fdt_for_each_subnode(subnode, fdt, node) {
-		paddr_t reg = 0;
-
-		/* Get an ID for the domain */
-		reg = _fdt_reg_base_address(fdt, subnode);
-		assert(reg != DT_INFO_INVALID_REG);
-
-		if ((uint32_t)reg >= chan->voltd_count)
-			chan->voltd_count = (uint32_t)reg + U(1);
-	}
-
-	chan->voltd_array = calloc(chan->voltd_count,
-				   sizeof(struct scmi_voltd));
-	if (!chan->voltd_array)
-		return TEE_ERROR_OUT_OF_MEMORY;
-
 	fdt_for_each_subnode(subnode, fdt, node) {
 		struct scmi_voltd *voltd = NULL;
 		struct rdev *rdev = NULL;
+		const char *name = NULL;
 		uint32_t domain_id = 0;
 
-		rdev = regulator_get_by_supply_name(fdt, subnode, "voltd");
+		name = fdt_getprop(fdt, subnode, "voltd-name", NULL);
+		if (!name)
+			continue;
+
+		/* Check that the given voltage domain name is unique */
+		for (voltd = chan->voltd_array;
+		     voltd < chan->voltd_array + chan->voltd_count; voltd++) {
+			if (voltd->rdev &&
+			    !strcmp(voltd->rdev->reg_name, name)) {
+				EMSG("voltd-name %s re-used", name);
+				return TEE_ERROR_GENERIC;
+			}
+		}
+
+		rdev = regulator_get_by_regulator_name(name);
 		if (!rdev) {
-			EMSG("Regulator not found for voltd %s, skipped",
-			     fdt_get_name(fdt, subnode, NULL));
+			EMSG("regulator %s not found, skipped", name);
 			continue;
 		}
 
 		/* Get an ID for the domain */
-		domain_id = (uint32_t)_fdt_reg_base_address(fdt, subnode);
+		cuint = fdt_getprop(fdt, subnode, "reg", NULL);
+		if (cuint) {
+			domain_id = fdt32_to_cpu(*cuint);
+			using_reg = true;
+		} else {
+			domain_id = chan->voltd_count;
+			using_name = true;
+		}
+
+		if (using_reg && using_name) {
+			EMSG("Mixed reg usage in device-tree");
+			return TEE_ERROR_GENERIC;
+		}
+
+		/* Realloc voltd_array with zeroing new cells */
+		voltd = calloc(chan->voltd_count + 1, sizeof(*voltd));
+		if (!voltd)
+			panic();
+
+		memcpy(voltd, chan->voltd_array,
+		       chan->voltd_count * sizeof(*voltd));
+		chan->voltd_array = voltd;
+		chan->voltd_count++;
+
 		voltd = chan->voltd_array + domain_id;
 
 		/* Check that the domain_id is not already used */
 		if (voltd->rdev) {
 			EMSG("Domain ID %"PRIu32" already used", domain_id);
-			panic();
+			return TEE_ERROR_GENERIC;
 		}
 
 		voltd->rdev = rdev;

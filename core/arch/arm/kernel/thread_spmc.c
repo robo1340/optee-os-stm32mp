@@ -6,8 +6,8 @@
 
 #include <assert.h>
 #include <ffa.h>
-#include <initcall.h>
 #include <io.h>
+#include <initcall.h>
 #include <kernel/interrupt.h>
 #include <kernel/panic.h>
 #include <kernel/secure_partition.h>
@@ -15,7 +15,6 @@
 #include <kernel/spmc_sp_handler.h>
 #include <kernel/tee_misc.h>
 #include <kernel/thread.h>
-#include <kernel/thread_private.h>
 #include <kernel/thread_spmc.h>
 #include <mm/core_mmu.h>
 #include <mm/mobj.h>
@@ -27,6 +26,8 @@
 #include <tee/entry_std.h>
 #include <tee/uuid.h>
 #include <util.h>
+
+#include "thread_private.h"
 
 #if defined(CFG_CORE_SEL1_SPMC)
 struct mem_share_state {
@@ -62,7 +63,11 @@ static uint16_t my_endpoint_id;
  * the lock.
  */
 
-#ifdef CFG_CORE_SEL1_SPMC
+#ifdef CFG_CORE_SEL2_SPMC
+static uint8_t __rx_buf[SMALL_PAGE_SIZE] __aligned(SMALL_PAGE_SIZE);
+static uint8_t __tx_buf[SMALL_PAGE_SIZE] __aligned(SMALL_PAGE_SIZE);
+static struct ffa_rxtx nw_rxtx = { .rx = __rx_buf, .tx = __tx_buf };
+#else
 static struct ffa_rxtx nw_rxtx;
 
 static bool is_nw_buf(struct ffa_rxtx *rxtx)
@@ -72,10 +77,6 @@ static bool is_nw_buf(struct ffa_rxtx *rxtx)
 
 static SLIST_HEAD(mem_frag_state_head, mem_frag_state) frag_state_head =
 	SLIST_HEAD_INITIALIZER(&frag_state_head);
-#else
-static uint8_t __rx_buf[SMALL_PAGE_SIZE] __aligned(SMALL_PAGE_SIZE);
-static uint8_t __tx_buf[SMALL_PAGE_SIZE] __aligned(SMALL_PAGE_SIZE);
-static struct ffa_rxtx nw_rxtx = { .rx = __rx_buf, .tx = __tx_buf };
 #endif
 
 static uint32_t swap_src_dst(uint32_t src_dst)
@@ -496,8 +497,7 @@ static void handle_blocking_call(struct thread_smc_args *args)
 	case OPTEE_FFA_EXCHANGE_CAPABILITIES:
 		spmc_set_args(args, FFA_MSG_SEND_DIRECT_RESP_32,
 			      swap_src_dst(args->a1), 0, 0,
-			      THREAD_RPC_MAX_NUM_PARAMS,
-			      OPTEE_FFA_SEC_CAP_ARG_OFFSET);
+			      THREAD_RPC_MAX_NUM_PARAMS, 0);
 		break;
 	case OPTEE_FFA_UNREGISTER_SHM:
 		spmc_set_args(args, FFA_MSG_SEND_DIRECT_RESP_32,
@@ -973,11 +973,8 @@ void thread_spmc_msg_recv(struct thread_smc_args *args)
 #endif /*CFG_CORE_SEL1_SPMC*/
 	case FFA_INTERRUPT:
 		itr_core_handler();
-		spmc_set_args(args, FFA_MSG_WAIT, 0, 0, 0, 0, 0);
+		spmc_set_args(args, FFA_SUCCESS_32, args->a1, 0, 0, 0, 0);
 		break;
-#ifdef ARM64
-	case FFA_MSG_SEND_DIRECT_REQ_64:
-#endif
 	case FFA_MSG_SEND_DIRECT_REQ_32:
 		if (IS_ENABLED(CFG_SECURE_PARTITION) &&
 		    FFA_DST(args->a1) != my_endpoint_id) {
@@ -1013,11 +1010,11 @@ void thread_spmc_msg_recv(struct thread_smc_args *args)
 	}
 }
 
-static TEE_Result yielding_call_with_arg(uint64_t cookie, uint32_t offset)
+static uint32_t yielding_call_with_arg(uint64_t cookie, uint32_t offset)
 {
 	size_t sz_rpc = OPTEE_MSG_GET_ARG_SIZE(THREAD_RPC_MAX_NUM_PARAMS);
 	struct thread_ctx *thr = threads + thread_get_id();
-	TEE_Result res = TEE_ERROR_BAD_PARAMETERS;
+	uint32_t rv = TEE_ERROR_BAD_PARAMETERS;
 	struct optee_msg_arg *arg = NULL;
 	struct mobj *mobj = NULL;
 	uint32_t num_params = 0;
@@ -1029,11 +1026,11 @@ static TEE_Result yielding_call_with_arg(uint64_t cookie, uint32_t offset)
 		return TEE_ERROR_BAD_PARAMETERS;
 	}
 
-	res = mobj_inc_map(mobj);
-	if (res)
+	rv = mobj_inc_map(mobj);
+	if (rv)
 		goto out_put_mobj;
 
-	res = TEE_ERROR_BAD_PARAMETERS;
+	rv = TEE_ERROR_BAD_PARAMETERS;
 	arg = mobj_get_va(mobj, offset, sizeof(*arg));
 	if (!arg)
 		goto out_dec_map;
@@ -1048,7 +1045,7 @@ static TEE_Result yielding_call_with_arg(uint64_t cookie, uint32_t offset)
 	if (!thr->rpc_arg)
 		goto out_dec_map;
 
-	res = tee_entry_std(arg, num_params);
+	rv = tee_entry_std(arg, num_params);
 
 	thread_rpc_shm_cache_clear(&thr->shm_cache);
 	thr->rpc_arg = NULL;
@@ -1057,7 +1054,7 @@ out_dec_map:
 	mobj_dec_map(mobj);
 out_put_mobj:
 	mobj_put(mobj);
-	return res;
+	return rv;
 }
 
 /*
@@ -1208,11 +1205,6 @@ uint32_t thread_rpc_cmd(uint32_t cmd, size_t num_params,
 	return get_rpc_arg_res(arg, num_params, params);
 }
 
-uint32_t thread_rpc_ocall2_cmd(uint32_t param[2] __unused)
-{
-	return 1;
-}
-
 static void thread_rpc_free(unsigned int bt, uint64_t cookie, struct mobj *mobj)
 {
 	struct thread_rpc_arg rpc_arg = { .call = {
@@ -1317,26 +1309,7 @@ void thread_rpc_free_global_payload(struct mobj *mobj)
 			mobj);
 }
 
-void thread_spmc_register_secondary_ep(vaddr_t ep)
-{
-	unsigned long ret = 0;
-
-	/* Let the SPM know the entry point for secondary CPUs */
-	ret = thread_smc(FFA_SECONDARY_EP_REGISTER_64, ep, 0, 0);
-
-	if (ret != FFA_SUCCESS_32 && ret != FFA_SUCCESS_64)
-		EMSG("FFA_SECONDARY_EP_REGISTER_64 ret %#lx", ret);
-}
-
-#if defined(CFG_CORE_SEL1_SPMC)
-static TEE_Result spmc_init(void)
-{
-	my_endpoint_id = SPMC_ENDPOINT_ID;
-	DMSG("My endpoint ID %#x", my_endpoint_id);
-
-	return TEE_SUCCESS;
-}
-#else /* !defined(CFG_CORE_SEL1_SPMC) */
+#ifdef CFG_CORE_SEL2_SPMC
 static bool is_ffa_success(uint32_t fid)
 {
 #ifdef ARM64
@@ -1354,8 +1327,8 @@ static void spmc_rxtx_map(struct ffa_rxtx *rxtx)
 #else
 		.a0 = FFA_RXTX_MAP_32,
 #endif
-		.a1 = virt_to_phys(rxtx->tx),
-		.a2 = virt_to_phys(rxtx->rx),
+		.a1 = (vaddr_t)rxtx->tx,
+		.a2 = (vaddr_t)rxtx->rx,
 		.a3 = 1,
 	};
 
@@ -1406,7 +1379,8 @@ static struct ffa_mem_transaction *spmc_retrieve_req(uint64_t cookie)
 	trans_descr->sender_id = thread_get_tsd()->rpc_target_info;
 	trans_descr->mem_reg_attr = FFA_NORMAL_MEM_REG_ATTR;
 	trans_descr->global_handle = cookie;
-	trans_descr->flags = FFA_MEMORY_REGION_TRANSACTION_TYPE_SHARE |
+	trans_descr->flags = FFA_MEMORY_REGION_FLAG_TIME_SLICE |
+			     FFA_MEMORY_REGION_TRANSACTION_TYPE_SHARE |
 			     FFA_MEMORY_REGION_FLAG_ANY_ALIGNMENT;
 	trans_descr->mem_access_count = 1;
 	acc_descr_array = trans_descr->mem_access_array;
@@ -1415,7 +1389,7 @@ static struct ffa_mem_transaction *spmc_retrieve_req(uint64_t cookie)
 	perm_descr = &acc_descr_array->access_perm;
 	perm_descr->endpoint_id = my_endpoint_id;
 	perm_descr->perm = FFA_MEM_ACC_RW;
-	perm_descr->flags = 0;
+	perm_descr->flags = FFA_MEMORY_REGION_FLAG_TIME_SLICE;
 
 	thread_smccc(&args);
 	if (args.a0 != FFA_MEM_RETRIEVE_RESP) {
@@ -1498,13 +1472,13 @@ struct mobj_ffa *thread_spmc_populate_mobj_from_rx(uint64_t cookie)
 	descr = (struct ffa_mem_region *)((vaddr_t)retrieve_desc + offs);
 
 	num_pages = READ_ONCE(descr->total_page_count);
-	mf = mobj_ffa_spmc_new(cookie, num_pages);
+	mf = mobj_ffa_sel2_spmc_new(cookie, num_pages);
 	if (!mf)
 		goto out;
 
 	if (set_pages(descr->address_range_array,
 		      READ_ONCE(descr->address_range_count), num_pages, mf)) {
-		mobj_ffa_spmc_delete(mf);
+		mobj_ffa_sel2_spmc_delete(mf);
 		goto out;
 	}
 
@@ -1525,6 +1499,16 @@ static TEE_Result spmc_init(void)
 
 	return TEE_SUCCESS;
 }
-#endif /* !defined(CFG_CORE_SEL1_SPMC) */
+#endif /*CFG_CORE_SEL2_SPMC*/
+
+#if defined(CFG_CORE_SEL1_SPMC)
+static TEE_Result spmc_init(void)
+{
+	my_endpoint_id = SPMC_ENDPOINT_ID;
+	DMSG("My endpoint ID %#x", my_endpoint_id);
+
+	return TEE_SUCCESS;
+}
+#endif /*CFG_CORE_SEL1_SPMC*/
 
 service_init(spmc_init);

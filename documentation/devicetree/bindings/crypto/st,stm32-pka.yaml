@@ -30,6 +30,7 @@ required:
   - compatible
   - reg
   - clocks
+  - resets
 
 additionalProperties: false
 

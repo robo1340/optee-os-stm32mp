@@ -98,24 +98,6 @@ static void clk_init_parent(struct clk *clk)
 	}
 }
 
-TEE_Result clk_reparent(struct clk *clk, struct clk *parent)
-{
-	size_t i = 0;
-
-	if (clk->parent == parent)
-		return TEE_SUCCESS;
-
-	for (i = 0; i < clk_get_num_parents(clk); i++) {
-		if (clk_get_parent_by_index(clk, i) == parent) {
-			clk->parent = parent;
-			return TEE_SUCCESS;
-		}
-	}
-	EMSG("Clock %s is not a parent of clock %s", parent->name, clk->name);
-
-	return TEE_ERROR_BAD_PARAMETERS;
-}
-
 TEE_Result clk_register(struct clk *clk)
 {
 	assert(clk_check(clk));
@@ -343,7 +325,7 @@ static TEE_Result clk_set_rate_no_lock(struct clk *clk, unsigned long rate)
 
 	/* find the closest rate and parent clk/rate */
 	if (clk->ops->determine_rate) {
-		struct clk_rate_request req = { };
+		struct clk_rate_request req;
 		struct clk *old_parent = clk->parent;
 
 		req.rate = rate;
@@ -359,8 +341,6 @@ static TEE_Result clk_set_rate_no_lock(struct clk *clk, unsigned long rate)
 		parent = req.best_parent;
 
 		res = clk_set_rate_no_lock(parent, parent_rate);
-		if (res)
-			return res;
 
 		if (parent && parent != old_parent) {
 			if (parent && clk->num_parents > 1) {
@@ -387,14 +367,7 @@ static TEE_Result clk_set_rate_no_lock(struct clk *clk, unsigned long rate)
 	}
 
 	if (clk->ops->set_rate) {
-		if (clk->flags & CLK_SET_RATE_UNGATE)
-			clk_enable_no_lock(clk);
-
 		res = clk->ops->set_rate(clk, new_rate, parent_rate);
-
-		if (clk->flags & CLK_SET_RATE_UNGATE)
-			clk_disable_no_lock(clk);
-
 		if (res)
 			return res;
 	}
@@ -427,6 +400,7 @@ TEE_Result clk_set_rate(struct clk *clk, unsigned long rate)
 
 TEE_Result clk_get_duty_cyle(struct clk *clk, struct clk_duty *duty)
 {
+
 	if (clk->ops->get_duty_cycle)
 		return clk->ops->get_duty_cycle(clk, duty);
 

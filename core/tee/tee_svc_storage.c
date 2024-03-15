@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 /*
  * Copyright (c) 2014, STMicroelectronics International N.V.
- * Copyright (c) 2020, 2022 Linaro Limited
+ * Copyright (c) 2020, Linaro Limited
  */
 
 #include <config.h>
@@ -11,7 +11,6 @@
 #include <kernel/tee_ta_manager.h>
 #include <kernel/ts_manager.h>
 #include <kernel/user_access.h>
-#include <memtag.h>
 #include <mm/vm.h>
 #include <string.h>
 #include <tee_api_defines_extensions.h>
@@ -193,13 +192,10 @@ TEE_Result syscall_storage_obj_open(unsigned long storage_id, void *object_id,
 		goto exit;
 	}
 
-	object_id = memtag_strip_tag(object_id);
-	if (object_id_len) {
-		res = vm_check_access_rights(&utc->uctx, TEE_MEMORY_ACCESS_READ,
-					     (uaddr_t)object_id, object_id_len);
-		if (res != TEE_SUCCESS)
-			goto err;
-	}
+	res = vm_check_access_rights(&utc->uctx, TEE_MEMORY_ACCESS_READ,
+				     (uaddr_t)object_id, object_id_len);
+	if (res != TEE_SUCCESS)
+		goto err;
 
 	res = tee_pobj_get((void *)&sess->ctx->uuid, object_id,
 			   object_id_len, flags, TEE_POBJ_USAGE_OPEN, fops,
@@ -337,15 +333,10 @@ TEE_Result syscall_storage_obj_create(unsigned long storage_id, void *object_id,
 	if (object_id_len > TEE_OBJECT_ID_MAX_LEN)
 		return TEE_ERROR_BAD_PARAMETERS;
 
-	object_id = memtag_strip_tag(object_id);
-	data = memtag_strip_tag(data);
-
-	if (object_id_len) {
-		res = vm_check_access_rights(&utc->uctx, TEE_MEMORY_ACCESS_READ,
-					     (uaddr_t)object_id, object_id_len);
-		if (res != TEE_SUCCESS)
-			goto err;
-	}
+	res = vm_check_access_rights(&utc->uctx, TEE_MEMORY_ACCESS_READ,
+				     (uaddr_t)object_id, object_id_len);
+	if (res != TEE_SUCCESS)
+		goto err;
 
 	res = tee_pobj_get((void *)&sess->ctx->uuid, object_id,
 			   object_id_len, flags, TEE_POBJ_USAGE_CREATE,
@@ -431,6 +422,8 @@ TEE_Result syscall_storage_obj_del(unsigned long obj)
 	struct user_ta_ctx *utc = to_user_ta_ctx(sess->ctx);
 	TEE_Result res = TEE_SUCCESS;
 	struct tee_obj *o = NULL;
+	uint8_t *data = NULL;
+	size_t len = 0;
 
 	res = tee_obj_get(utc, uref_to_vaddr(obj), &o);
 	if (res != TEE_SUCCESS)
@@ -443,10 +436,16 @@ TEE_Result syscall_storage_obj_del(unsigned long obj)
 		return TEE_ERROR_BAD_STATE;
 
 	if (IS_ENABLED(CFG_NXP_SE05X)) {
-		/* Cryptographic layer house-keeping */
-		res = crypto_storage_obj_del(o);
-		if (res)
-			return res;
+		len = o->info.dataSize;
+		data = calloc(1, len);
+		if (!data)
+			return TEE_ERROR_OUT_OF_MEMORY;
+
+		res = o->pobj->fops->read(o->fh, o->info.dataPosition,
+					  data, &len);
+		if (res == TEE_SUCCESS)
+			crypto_storage_obj_del(data, len);
+		free(data);
 	}
 
 	res = o->pobj->fops->remove(o->pobj);
@@ -489,13 +488,10 @@ TEE_Result syscall_storage_obj_rename(unsigned long obj, void *object_id,
 		goto exit;
 	}
 
-	object_id = memtag_strip_tag(object_id);
-	if (object_id_len) {
-		res = vm_check_access_rights(&utc->uctx, TEE_MEMORY_ACCESS_READ,
-					     (uaddr_t)object_id, object_id_len);
-		if (res != TEE_SUCCESS)
-			goto exit;
-	}
+	res = vm_check_access_rights(&utc->uctx, TEE_MEMORY_ACCESS_READ,
+				     (uaddr_t)object_id, object_id_len);
+	if (res != TEE_SUCCESS)
+		goto exit;
 
 	/* reserve dest name */
 	fops = o->pobj->fops;
@@ -619,9 +615,6 @@ TEE_Result syscall_storage_next_enum(unsigned long obj_enum,
 	if (res != TEE_SUCCESS)
 		goto exit;
 
-	info = memtag_strip_tag(info);
-	obj_id = memtag_strip_tag(obj_id);
-
 	/* check rights of the provided buffers */
 	res = vm_check_access_rights(&utc->uctx, TEE_MEMORY_ACCESS_WRITE,
 				     (uaddr_t)info, sizeof(TEE_ObjectInfo));
@@ -709,7 +702,6 @@ TEE_Result syscall_storage_obj_read(unsigned long obj, void *data, size_t len,
 		goto exit;
 	}
 
-	data = memtag_strip_tag(data);
 	/* check rights of the provided buffer */
 	res = vm_check_access_rights(&utc->uctx, TEE_MEMORY_ACCESS_WRITE,
 				     (uaddr_t)data, len);
@@ -766,7 +758,6 @@ TEE_Result syscall_storage_obj_write(unsigned long obj, void *data, size_t len)
 		goto exit;
 	}
 
-	data = memtag_strip_tag(data);
 	/* check rights of the provided buffer */
 	res = vm_check_access_rights(&utc->uctx, TEE_MEMORY_ACCESS_READ,
 				     (uaddr_t)data, len);

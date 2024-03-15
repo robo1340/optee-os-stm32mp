@@ -280,7 +280,7 @@ void _fdt_fill_device_info(const void *fdt, struct dt_node_info *info, int offs)
 }
 
 int _fdt_read_uint32_array(const void *fdt, int node, const char *prop_name,
-			   uint32_t *array, size_t count)
+			   uint32_t *array, uint32_t count)
 {
 	const fdt32_t *cuint = NULL;
 	int len = 0;
@@ -311,10 +311,19 @@ int _fdt_read_uint32(const void *fdt, int node, const char *prop_name,
 uint32_t _fdt_read_uint32_default(const void *fdt, int node,
 				  const char *prop_name, uint32_t dflt_value)
 {
-	uint32_t value = 0;
+	uint32_t ret = dflt_value;
+	int err = _fdt_read_uint32(fdt, node, prop_name, &ret);
 
-	if (_fdt_read_uint32(fdt, node, prop_name, &value) < 0)
+	if (err < 0)
 		return dflt_value;
 
-	return value;
+	return ret;
+}
+
+bool _fdt_check_node(const void *fdt, int node)
+{
+	int len = 0;
+	const char *cchar = fdt_get_name(fdt, node, &len);
+
+	return cchar && (len >= 0);
 }

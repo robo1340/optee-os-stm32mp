@@ -91,13 +91,6 @@ static TEE_Result ecc_get_keysize(uint32_t curve, uint32_t algo,
 		    (algo != TEE_ALG_ECDH_P521))
 			return TEE_ERROR_BAD_PARAMETERS;
 		break;
-	case TEE_ECC_CURVE_SM2:
-		*key_size_bits = 256;
-		*key_size_bytes = 32;
-		if (algo != 0 && algo != TEE_ALG_SM2_DSA_SM3 &&
-		    algo != TEE_ALG_SM2_KEP && algo != TEE_ALG_SM2_PKE)
-			return TEE_ERROR_BAD_PARAMETERS;
-		break;
 	default:
 		*key_size_bits = 0;
 		*key_size_bytes = 0;
@@ -123,37 +116,15 @@ static void ecc_clear_precomputed(mbedtls_ecp_group *grp)
 	grp->T_size = 0;
 }
 
-static mbedtls_ecp_group_id curve_to_group_id(uint32_t curve)
-{
-	switch (curve) {
-	case TEE_ECC_CURVE_NIST_P192:
-		return MBEDTLS_ECP_DP_SECP192R1;
-	case TEE_ECC_CURVE_NIST_P224:
-		return MBEDTLS_ECP_DP_SECP224R1;
-	case TEE_ECC_CURVE_NIST_P256:
-		return MBEDTLS_ECP_DP_SECP256R1;
-	case TEE_ECC_CURVE_NIST_P384:
-		return MBEDTLS_ECP_DP_SECP384R1;
-	case TEE_ECC_CURVE_NIST_P521:
-		return MBEDTLS_ECP_DP_SECP521R1;
-	case TEE_ECC_CURVE_SM2:
-		return MBEDTLS_ECP_DP_SM2;
-	default:
-		return MBEDTLS_ECP_DP_NONE;
-	}
-}
-
 static TEE_Result ecc_generate_keypair(struct ecc_keypair *key, size_t key_size)
 {
 	TEE_Result res = TEE_SUCCESS;
 	int lmd_res = 0;
 	mbedtls_ecdsa_context ecdsa;
-	mbedtls_ecp_group_id gid;
 	size_t key_size_bytes = 0;
 	size_t key_size_bits = 0;
 
 	memset(&ecdsa, 0, sizeof(ecdsa));
-	memset(&gid, 0, sizeof(gid));
 
 	res = ecc_get_keysize(key->curve, 0, &key_size_bytes, &key_size_bits);
 	if (res != TEE_SUCCESS)
@@ -165,8 +136,7 @@ static TEE_Result ecc_generate_keypair(struct ecc_keypair *key, size_t key_size)
 	mbedtls_ecdsa_init(&ecdsa);
 
 	/* Generate the ECC key */
-	gid = curve_to_group_id(key->curve);
-	lmd_res = mbedtls_ecdsa_genkey(&ecdsa, gid, mbd_rand, NULL);
+	lmd_res = mbedtls_ecdsa_genkey(&ecdsa, key->curve, mbd_rand, NULL);
 	if (lmd_res != 0) {
 		res = TEE_ERROR_BAD_PARAMETERS;
 		FMSG("mbedtls_ecdsa_genkey failed.");
@@ -209,14 +179,12 @@ static TEE_Result ecc_sign(uint32_t algo, struct ecc_keypair *key,
 	int lmd_res = 0;
 	const mbedtls_pk_info_t *pk_info = NULL;
 	mbedtls_ecdsa_context ecdsa;
-	mbedtls_ecp_group_id gid;
 	size_t key_size_bytes = 0;
 	size_t key_size_bits = 0;
 	mbedtls_mpi r;
 	mbedtls_mpi s;
 
 	memset(&ecdsa, 0, sizeof(ecdsa));
-	memset(&gid, 0, sizeof(gid));
 	memset(&r, 0, sizeof(r));
 	memset(&s, 0, sizeof(s));
 
@@ -227,9 +195,7 @@ static TEE_Result ecc_sign(uint32_t algo, struct ecc_keypair *key,
 	mbedtls_mpi_init(&s);
 
 	mbedtls_ecdsa_init(&ecdsa);
-
-	gid = curve_to_group_id(key->curve);
-	lmd_res = mbedtls_ecp_group_load(&ecdsa.grp, gid);
+	lmd_res = mbedtls_ecp_group_load(&ecdsa.grp, key->curve);
 	if (lmd_res != 0) {
 		res = TEE_ERROR_NOT_SUPPORTED;
 		goto out;
@@ -241,12 +207,6 @@ static TEE_Result ecc_sign(uint32_t algo, struct ecc_keypair *key,
 			      &key_size_bits);
 	if (res != TEE_SUCCESS)
 		goto out;
-
-	if (*sig_len < 2 * key_size_bytes) {
-		*sig_len = 2 * key_size_bytes;
-		res = TEE_ERROR_SHORT_BUFFER;
-		goto out;
-	}
 
 	pk_info = mbedtls_pk_info_from_type(MBEDTLS_PK_ECDSA);
 	if (pk_info == NULL) {
@@ -287,14 +247,12 @@ static TEE_Result ecc_verify(uint32_t algo, struct ecc_public_key *key,
 	TEE_Result res = TEE_SUCCESS;
 	int lmd_res = 0;
 	mbedtls_ecdsa_context ecdsa;
-	mbedtls_ecp_group_id gid;
 	size_t key_size_bytes, key_size_bits = 0;
 	uint8_t one[1] = { 1 };
 	mbedtls_mpi r;
 	mbedtls_mpi s;
 
 	memset(&ecdsa, 0, sizeof(ecdsa));
-	memset(&gid, 0, sizeof(gid));
 	memset(&r, 0, sizeof(r));
 	memset(&s, 0, sizeof(s));
 
@@ -306,8 +264,7 @@ static TEE_Result ecc_verify(uint32_t algo, struct ecc_public_key *key,
 
 	mbedtls_ecdsa_init(&ecdsa);
 
-	gid = curve_to_group_id(key->curve);
-	lmd_res = mbedtls_ecp_group_load(&ecdsa.grp, gid);
+	lmd_res = mbedtls_ecp_group_load(&ecdsa.grp, key->curve);
 	if (lmd_res != 0) {
 		res = TEE_ERROR_NOT_SUPPORTED;
 		goto out;
@@ -357,14 +314,11 @@ static TEE_Result ecc_shared_secret(struct ecc_keypair *private_key,
 	int lmd_res = 0;
 	uint8_t one[1] = { 1 };
 	mbedtls_ecdh_context ecdh;
-	mbedtls_ecp_group_id gid;
 	size_t out_len = 0;
 
 	memset(&ecdh, 0, sizeof(ecdh));
-	memset(&gid, 0, sizeof(gid));
 	mbedtls_ecdh_init(&ecdh);
-	gid = curve_to_group_id(private_key->curve);
-	lmd_res = mbedtls_ecp_group_load(&ecdh.grp, gid);
+	lmd_res = mbedtls_ecp_group_load(&ecdh.grp, private_key->curve);
 	if (lmd_res != 0) {
 		res = TEE_ERROR_NOT_SUPPORTED;
 		goto out;
@@ -426,21 +380,18 @@ TEE_Result crypto_asym_alloc_ecc_keypair(struct ecc_keypair *s,
 		if (!IS_ENABLED(CFG_CRYPTO_SM2_DSA))
 			return TEE_ERROR_NOT_IMPLEMENTED;
 
-		s->curve = TEE_ECC_CURVE_SM2;
 		s->ops = &sm2_dsa_keypair_ops;
 		break;
 	case TEE_TYPE_SM2_PKE_KEYPAIR:
 		if (!IS_ENABLED(CFG_CRYPTO_SM2_PKE))
 			return TEE_ERROR_NOT_IMPLEMENTED;
 
-		s->curve = TEE_ECC_CURVE_SM2;
 		s->ops = &sm2_pke_keypair_ops;
 		break;
 	case TEE_TYPE_SM2_KEP_KEYPAIR:
 		if (!IS_ENABLED(CFG_CRYPTO_SM2_KEP))
 			return TEE_ERROR_NOT_IMPLEMENTED;
 
-		s->curve = TEE_ECC_CURVE_SM2;
 		s->ops = &sm2_kep_keypair_ops;
 		break;
 	default:
@@ -500,21 +451,18 @@ TEE_Result crypto_asym_alloc_ecc_public_key(struct ecc_public_key *s,
 		if (!IS_ENABLED(CFG_CRYPTO_SM2_DSA))
 			return TEE_ERROR_NOT_IMPLEMENTED;
 
-		s->curve = TEE_ECC_CURVE_SM2;
 		s->ops = &sm2_dsa_public_key_ops;
 		break;
 	case TEE_TYPE_SM2_PKE_PUBLIC_KEY:
 		if (!IS_ENABLED(CFG_CRYPTO_SM2_PKE))
 			return TEE_ERROR_NOT_IMPLEMENTED;
 
-		s->curve = TEE_ECC_CURVE_SM2;
 		s->ops = &sm2_pke_public_key_ops;
 		break;
 	case TEE_TYPE_SM2_KEP_PUBLIC_KEY:
 		if (!IS_ENABLED(CFG_CRYPTO_SM2_KEP))
 			return TEE_ERROR_NOT_IMPLEMENTED;
 
-		s->curve = TEE_ECC_CURVE_SM2;
 		s->ops = &sm2_kep_public_key_ops;
 		break;
 	default:

@@ -14,8 +14,6 @@
 #include <kernel/interrupt.h>
 #include <kernel/panic.h>
 #include <kernel/pm.h>
-#include <mm/core_memprot.h>
-#include <mm/core_mmu.h>
 #include <libfdt.h>
 #include <malloc.h>
 #include <util.h>
@@ -215,9 +213,9 @@ void gic_init_setup(struct gic_data *gd)
 		/* Mark interrupts non-secure */
 		if (n == 0) {
 			/* per-CPU inerrupts config:
-			 * ID0-ID7(SGI)	  for Non-secure interrupts
-			 * ID8-ID15(SGI)  for Secure interrupts.
-			 * All PPI config as Non-secure interrupts.
+                         * ID0-ID7(SGI)   for Non-secure interrupts
+                         * ID8-ID15(SGI)  for Secure interrupts.
+                         * All PPI config as Non-secure interrupts.
 			 */
 			io_write32(gd->gicd_base + GICD_IGROUPR(n), 0xffff00ff);
 		} else {
@@ -273,27 +271,9 @@ static int gic_dt_get_irq(const uint32_t *properties, int count, uint32_t *type,
 	return it_num;
 }
 
-void gic_init_base_addr(struct gic_data *gd,
-			paddr_t gicc_base_pa __maybe_unused,
-			paddr_t gicd_base_pa)
+void gic_init_base_addr(struct gic_data *gd, vaddr_t gicc_base __maybe_unused,
+			vaddr_t gicd_base)
 {
-	vaddr_t gicc_base = 0;
-	vaddr_t gicd_base = 0;
-
-	assert(cpu_mmu_enabled());
-
-	gicd_base = core_mmu_get_va(gicd_base_pa, MEM_AREA_IO_SEC,
-				    GIC_DIST_REG_SIZE);
-	if (!gicd_base)
-		panic();
-
-	if (!IS_ENABLED(CFG_ARM_GICV3)) {
-		gicc_base = core_mmu_get_va(gicc_base_pa, MEM_AREA_IO_SEC,
-					    GIC_CPU_REG_SIZE);
-		if (!gicc_base)
-			panic();
-	}
-
 	gd->gicc_base = gicc_base;
 	gd->gicd_base = gicd_base;
 	gd->max_it = probe_max_it(gicc_base, gicd_base);
@@ -305,9 +285,9 @@ void gic_init_base_addr(struct gic_data *gd,
 	gic_pm_register(gd);
 }
 
-void gic_init(struct gic_data *gd, paddr_t gicc_base_pa, paddr_t gicd_base_pa)
+void gic_init(struct gic_data *gd, vaddr_t gicc_base, vaddr_t gicd_base)
 {
-	gic_init_base_addr(gd, gicc_base_pa, gicd_base_pa);
+	gic_init_base_addr(gd, gicc_base, gicd_base);
 	gic_setup_clear_it(gd);
 	gic_init_setup(gd);
 }

@@ -46,6 +46,7 @@ bool processing_is_tee_symm(enum pkcs11_mechanism_id proc_id)
 	/* Ciphering */
 	case PKCS11_CKM_AES_ECB:
 	case PKCS11_CKM_AES_CBC:
+	case PKCS11_CKM_AES_CBC_PAD:
 	case PKCS11_CKM_AES_CTS:
 	case PKCS11_CKM_AES_CTR:
 	case PKCS11_CKM_AES_ECB_ENCRYPT_DATA:
@@ -66,6 +67,7 @@ pkcs2tee_algorithm(uint32_t *tee_id, struct pkcs11_attribute_head *proc_params)
 		/* AES flavors */
 		{ PKCS11_CKM_AES_ECB, TEE_ALG_AES_ECB_NOPAD },
 		{ PKCS11_CKM_AES_CBC, TEE_ALG_AES_CBC_NOPAD },
+		{ PKCS11_CKM_AES_CBC_PAD, TEE_ALG_AES_CBC_NOPAD },
 		{ PKCS11_CKM_AES_ECB_ENCRYPT_DATA, TEE_ALG_AES_ECB_NOPAD },
 		{ PKCS11_CKM_AES_CBC_ENCRYPT_DATA, TEE_ALG_AES_CBC_NOPAD },
 		{ PKCS11_CKM_AES_CTR, TEE_ALG_AES_CTR },
@@ -582,6 +584,7 @@ init_tee_operation(struct pkcs11_session *session,
 		rc = PKCS11_CKR_OK;
 		break;
 	case PKCS11_CKM_AES_CBC:
+	case PKCS11_CKM_AES_CBC_PAD:
 	case PKCS11_CKM_AES_CTS:
 		if (proc_params->size != 16)
 			return PKCS11_CKR_MECHANISM_PARAM_INVALID;
@@ -638,6 +641,11 @@ static enum pkcs11_rc input_data_size_is_valid(struct active_processing *proc,
 		if (function == PKCS11_FUNCTION_ENCRYPT &&
 		    in_size % TEE_AES_BLOCK_SIZE)
 			return PKCS11_CKR_DATA_LEN_RANGE;
+		if (function == PKCS11_FUNCTION_DECRYPT &&
+		    in_size % TEE_AES_BLOCK_SIZE)
+			return PKCS11_CKR_ENCRYPTED_DATA_LEN_RANGE;
+		break;
+	case PKCS11_CKM_AES_CBC_PAD:
 		if (function == PKCS11_FUNCTION_DECRYPT &&
 		    in_size % TEE_AES_BLOCK_SIZE)
 			return PKCS11_CKR_ENCRYPTED_DATA_LEN_RANGE;
@@ -800,6 +808,7 @@ enum pkcs11_rc step_symm_operation(struct pkcs11_session *session,
 
 	case PKCS11_CKM_AES_ECB:
 	case PKCS11_CKM_AES_CBC:
+	case PKCS11_CKM_AES_CBC_PAD:
 	case PKCS11_CKM_AES_CTS:
 	case PKCS11_CKM_AES_CTR:
 		if (step == PKCS11_FUNC_STEP_FINAL ||
@@ -938,6 +947,7 @@ enum pkcs11_rc step_symm_operation(struct pkcs11_session *session,
 
 	case PKCS11_CKM_AES_ECB:
 	case PKCS11_CKM_AES_CBC:
+	case PKCS11_CKM_AES_CBC_PAD:
 	case PKCS11_CKM_AES_CTS:
 	case PKCS11_CKM_AES_CTR:
 		if (step == PKCS11_FUNC_STEP_ONESHOT && !in_buf) {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 /*
- * Copyright (c) 2021-2022, Arm Limited. All rights reserved.
+ * Copyright (c) 2021, Arm Limited. All rights reserved.
  */
 #include <assert.h>
 #include <bitstring.h>
@@ -22,8 +22,6 @@ const struct mobj_ops mobj_sp_ops;
 
 struct mobj_sp {
 	struct mobj mobj;
-	uint32_t mem_type;
-	bool is_secure;
 	paddr_t pages[];
 };
 
@@ -44,7 +42,7 @@ static size_t mobj_sp_size(size_t num_pages)
 	return s;
 }
 
-struct mobj *sp_mem_new_mobj(uint64_t pages, uint32_t mem_type, bool is_secure)
+struct mobj *sp_mem_new_mobj(uint64_t pages)
 {
 	struct mobj_sp *m = NULL;
 	size_t s = 0;
@@ -60,9 +58,6 @@ struct mobj *sp_mem_new_mobj(uint64_t pages, uint32_t mem_type, bool is_secure)
 	m->mobj.ops = &mobj_sp_ops;
 	m->mobj.size = pages * SMALL_PAGE_SIZE;
 	m->mobj.phys_granule = SMALL_PAGE_SIZE;
-
-	m->mem_type = mem_type;
-	m->is_secure = is_secure;
 
 	refcount_set(&m->mobj.refc, 1);
 	return &m->mobj;
@@ -84,17 +79,8 @@ int sp_mem_add_pages(struct mobj *mobj, unsigned int *idx,
 	if (ADD_OVERFLOW(*idx, num_pages, &n) || n > tot_page_count)
 		return TEE_ERROR_BAD_PARAMETERS;
 
-	/* Don't check for device memory */
-	if (ms->mem_type == TEE_MATTR_MEM_TYPE_CACHED) {
-		if (ms->is_secure) {
-			if (!tee_pbuf_is_sec(pa, num_pages * SMALL_PAGE_SIZE))
-				return TEE_ERROR_BAD_PARAMETERS;
-		} else {
-			if (!tee_pbuf_is_non_sec(pa,
-						 num_pages * SMALL_PAGE_SIZE))
-				return TEE_ERROR_BAD_PARAMETERS;
-		}
-	}
+	if (!core_pbuf_is(CORE_MEM_NON_SEC, pa, num_pages * SMALL_PAGE_SIZE))
+		return TEE_ERROR_BAD_PARAMETERS;
 
 	for (n = 0; n < num_pages; n++)
 		ms->pages[n + *idx] = pa + n * SMALL_PAGE_SIZE;
@@ -103,23 +89,19 @@ int sp_mem_add_pages(struct mobj *mobj, unsigned int *idx,
 	return TEE_SUCCESS;
 }
 
-static TEE_Result get_mem_type(struct mobj *mobj, uint32_t *mt)
+static TEE_Result sp_mem_get_cattr(struct mobj *mobj __unused, uint32_t *cattr)
 {
-	struct mobj_sp *m = to_mobj_sp(mobj);
-
-	*mt = m->mem_type;
+	*cattr = TEE_MATTR_CACHE_CACHED;
 
 	return TEE_SUCCESS;
 }
 
-static bool mobj_sp_matches(struct mobj *mobj, enum buf_is_attr attr)
+static bool mobj_sp_matches(struct mobj *mobj __maybe_unused,
+			    enum buf_is_attr attr)
 {
-	struct mobj_sp *m = to_mobj_sp(mobj);
+	assert(mobj->ops == &mobj_sp_ops);
 
-	if (m->is_secure)
-		return attr == CORE_MEM_SEC;
-	else
-		return attr == CORE_MEM_NON_SEC || attr == CORE_MEM_REG_SHM;
+	return attr == CORE_MEM_NON_SEC || attr == CORE_MEM_REG_SHM;
 }
 
 static TEE_Result get_pa(struct mobj *mobj, size_t offset,
@@ -174,10 +156,10 @@ static void inactivate(struct mobj *mobj)
 	cpu_spin_unlock_xrestore(&sp_mem_lock, exceptions);
 }
 
-const struct mobj_ops mobj_sp_ops __weak __relrodata_unpaged("mobj_sp_ops") = {
+const struct mobj_ops mobj_sp_ops __weak __rodata_unpaged("mobj_sp_ops") = {
 	.get_pa = get_pa,
 	.get_phys_offs = get_phys_offs,
-	.get_mem_type = get_mem_type,
+	.get_cattr = sp_mem_get_cattr,
 	.matches = mobj_sp_matches,
 	.free = inactivate,
 };

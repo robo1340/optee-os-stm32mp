@@ -31,6 +31,8 @@
 
 #define PWR_CR2_BREN		BIT(0)
 #define PWR_CR2_RREN		BIT(1)
+#define PWR_CR2_BRRDY		BIT(16)
+#define PWR_CR2_RRRDY		BIT(17)
 
 #define PWR_CR3_VBE		BIT(8)
 #define PWR_CR3_VBRS		BIT(9)
@@ -61,19 +63,6 @@
 
 #define PWR_MPUWKUPENR_MASK	GENMASK_32(5, 0)
 
-#define PWR_CR2_BRRDY		BIT(16)
-#define PWR_CR2_RRRDY		BIT(17)
-
-/*
- * Flags for PWR wakeup event management
- * PWR_WKUP_FLAG_RISING - Detect event on signal rising edge
- * PWR_WKUP_FLAG_FALLING - Detect event on signal falling edge
- * PWR_WKUP_FLAG_THREADED - Notify event in the threaded context
- */
-#define PWR_WKUP_FLAG_RISING	0
-#define PWR_WKUP_FLAG_FALLING	BIT(0)
-#define PWR_WKUP_FLAG_THREADED	BIT(1)
-
 enum pwr_regulator {
 	PWR_REG11 = 0,
 	PWR_REG18,
@@ -82,6 +71,10 @@ enum pwr_regulator {
 };
 
 vaddr_t stm32_pwr_base(void);
+
+unsigned int stm32mp1_pwr_regulator_mv(enum pwr_regulator id);
+void stm32mp1_pwr_regulator_set_state(enum pwr_regulator id, bool enable);
+bool stm32mp1_pwr_regulator_is_enabled(enum pwr_regulator id);
 
 void stm32mp1_pwr_regul_lock(const struct regul_desc *desc __unused);
 void stm32mp1_pwr_regul_unlock(const struct regul_desc *desc __unused);
@@ -95,6 +88,12 @@ enum pwr_wkup_pins {
 	PWR_WKUP_PIN5,
 	PWR_WKUP_PIN6,
 	PWR_NB_WAKEUPPINS
+};
+
+enum pwr_wkup_flags {
+	PWR_WKUP_FLAG_RISING = 0,
+	PWR_WKUP_FLAG_FALLING = BIT(0),
+	PWR_WKUP_FLAG_THREADED = BIT(1),
 };
 
 TEE_Result

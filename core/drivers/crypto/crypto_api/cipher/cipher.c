@@ -11,6 +11,7 @@
 #include <drvcrypt_cipher.h>
 #include <kernel/panic.h>
 #include <malloc.h>
+#include <utee_defines.h>
 #include <util.h>
 
 static const struct crypto_cipher_ops cipher_ops;

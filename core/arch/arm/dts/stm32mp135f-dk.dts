@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause)
 /*
- * Copyright (C) STMicroelectronics 2021-2022 - All Rights Reserved
+ * Copyright (C) STMicroelectronics 2021 - All Rights Reserved
  * Author: Alexandre Torgue <alexandre.torgue@foss.st.com> for STMicroelectronics.
  */
 
 /dts-v1/;
 
 #include <dt-bindings/clock/stm32mp13-clksrc.h>
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/gpio/stm32mp_gpio.h>
 #include <dt-bindings/power/stm32mp1-power.h>
-#include <dt-bindings/random/stm32mp-rng.h>
-#include <dt-bindings/regulator/st,stm32mp13-regulator.h>
+#include <dt-bindings/rtc/rtc-stm32.h>
 #include <dt-bindings/soc/stm32mp-tzc400-macro.h>
 #include <dt-bindings/soc/stm32mp13-etzpc.h>
 #include <dt-bindings/soc/stm32mp13-tzc400.h>
@@ -30,28 +31,22 @@
 		stdout-path = "serial0:115200n8";
 	};
 
-	magic_wol: magic_wol {
-		compatible = "st,stm32mp1,pwr-irq-user";
-		st,wakeup-pin-number = <2>;
-		status = "okay";
-	};
-
 	memory@c0000000 {
 		device_type = "memory";
 		reg = <0xc0000000 0x20000000>;
 	};
 
-	reserved-memory {
-		#address-cells = <1>;
-		#size-cells = <1>;
-		ranges;
+        reserved-memory {
+                #address-cells = <1>;
+                #size-cells = <1>;
+                ranges;
 
-		optee_framebuffer: optee-framebuffer@dd000000 {
-			/* Secure framebuffer memory */
-			reg = <0xdd000000 0x1000000>;
-			st,protreg = <TZC_REGION_S_RDWR 0>;
-		};
-	};
+                optee_framebuffer: optee-framebuffer@dd000000 {
+                        /* Secure framebuffer memory */
+                        reg = <0xdd000000 0x1000000>;
+                        st,protreg = <TZC_REGION_S_RDWR 0>;
+                };
+        };
 
 	vin: vin {
 		compatible = "regulator-fixed";
@@ -67,6 +62,12 @@
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
 		regulator-always-on;
+	};
+
+	magic_wol: magic_wol {
+		compatible = "st,stm32mp1,pwr-irq-user";
+		st,wakeup-pin-number = <2>;
+		status = "okay";
 	};
 
 	typec_wakeup: typec_wakeup {
@@ -160,6 +161,10 @@
 
 &gpioe {
 	st,protreg = < (TZPROT(15)) >;
+};
+
+&gpiof {
+	st,protreg = < (TZPROT(8)) >;
 };
 
 &gpioi {
@@ -356,8 +361,9 @@
 	};
 };
 
-&iwdg1 {
+&iwdg2 {
 	timeout-sec = <32>;
+	secure-timeout-sec = <5>;
 	status = "okay";
 };
 
@@ -466,88 +472,88 @@
 
 	st,pll_vco {
 		pll1_vco_2000Mhz: pll1-vco-2000Mhz {
-			src = <CLK_PLL12_HSE>;
-			divmn = <1 82>;
-			frac = <0xAAA>;
+			src = < CLK_PLL12_HSE >;
+			divmn = < 1 82 >;
+			frac = < 0xAAA >;
 		};
 
 		pll1_vco_1300Mhz: pll1-vco-1300Mhz {
-			src = <CLK_PLL12_HSE>;
-			divmn = <2 80>;
-			frac = <0x800>;
+			src = < CLK_PLL12_HSE >;
+			divmn = < 2 80 >;
+			frac = < 0x800 >;
 		};
 
 		pll2_vco_1066Mhz: pll2-vco-1066Mhz {
-			src = <CLK_PLL12_HSE>;
-			divmn = <2 65>;
-			frac = <0x1400>;
+			src = < CLK_PLL12_HSE >;
+			divmn = < 2 65 >;
+			frac = < 0x1400 >;
 		};
 
-		pll3_vco_417Mhz: pll3-vco-417Mhz {
-			src = <CLK_PLL3_HSE>;
-			divmn = <1 33>;
-			frac = <0x1a04>;
+		pll3_vco_417_8Mhz: pll3-vco-417_8Mhz {
+			src = < CLK_PLL3_HSE >;
+			divmn = < 1 33 >;
+			frac = < 0x1a04 >;
 		};
 
 		pll4_vco_600Mhz: pll4-vco-600Mhz {
-			src = <CLK_PLL4_HSE>;
-			divmn = <1 49>;
+			src = < CLK_PLL4_HSE >;
+			divmn = < 1 49 >;
 		};
 	};
 
 	/* VCO = 1300.0 MHz => P = 650 (CPU) */
-	pll1: st,pll@0 {
+	pll1:st,pll@0 {
 		compatible = "st,stm32mp1-pll";
 		reg = <0>;
 
-		st,pll = <&pll1_cfg1>;
+		st,pll = < &pll1_cfg1 >;
 
 		pll1_cfg1: pll1_cfg1 {
-			st,pll_vco = <&pll1_vco_1300Mhz>;
-			st,pll_div_pqr = <0 1 1>;
+			st,pll_vco = < &pll1_vco_1300Mhz >;
+			st,pll_div_pqr = < 0 1 1 >;
 		};
 
 		pll1_cfg2: pll1_cfg2 {
-			st,pll_vco = <&pll1_vco_2000Mhz>;
-			st,pll_div_pqr = <0 1 1>;
+			st,pll_vco = < &pll1_vco_2000Mhz >;
+			st,pll_div_pqr = < 0 1 1 >;
 		};
 	};
 
 	/* VCO = 1066.0 MHz => P = 266 (AXI), Q = 266, R = 533 (DDR) */
-	pll2: st,pll@1 {
+	pll2:st,pll@1 {
 		compatible = "st,stm32mp1-pll";
 		reg = <1>;
 
-		st,pll = <&pll2_cfg1>;
+		st,pll = < &pll2_cfg1 >;
 
 		pll2_cfg1: pll2_cfg1 {
-			st,pll_vco = <&pll2_vco_1066Mhz>;
-			st,pll_div_pqr = <1 1 0>;
+			st,pll_vco = < &pll2_vco_1066Mhz >;
+			st,pll_div_pqr = < 1 1 0 >;
 		};
 	};
 
 	/* VCO = 417.8 MHz => P = 209, Q = 24, R = 11 */
-	pll3: st,pll@2 {
+	pll3:st,pll@2 {
 		compatible = "st,stm32mp1-pll";
 		reg = <2>;
 
-		st,pll = <&pll3_cfg1>;
+		st,pll = < &pll3_cfg1 >;
 
 		pll3_cfg1: pll3_cfg1 {
-			st,pll_vco = <&pll3_vco_417Mhz>;
-			st,pll_div_pqr = <1 16 36>;
+			st,pll_vco = < &pll3_vco_417_8Mhz >;
+			st,pll_div_pqr = < 1 16 36 >;
 		};
 	};
 
 	/* VCO = 600.0 MHz => P = 50, Q = 10, R = 50 */
-	pll4: st,pll@3 {
+	pll4:st,pll@3 {
 		compatible = "st,stm32mp1-pll";
 		reg = <3>;
-		st,pll = <&pll4_cfg1>;
+		st,pll = < &pll4_cfg1 >;
 
 		pll4_cfg1: pll4_cfg1 {
-			st,pll_vco = <&pll4_vco_600Mhz>;
-			st,pll_div_pqr = <11 59 11>;
+			st,pll_vco = < &pll4_vco_600Mhz >;
+			st,pll_div_pqr = < 11 59 11 >;
 		};
 	};
 
@@ -556,15 +562,15 @@
 		st,ck_mpu {
 
 			cfg_1 {
-				hz = <650000000>;
-				st,clksrc = <CLK_MPU_PLL1P>;
-				st,pll = <&pll1_cfg1>;
+				hz = < 1000000000 >;
+				st,clksrc = < CLK_MPU_PLL1P >;
+				st,pll = < &pll1_cfg2 >;
 			};
 
 			cfg_2 {
-				hz = <1000000000>;
-				st,clksrc = <CLK_MPU_PLL1P>;
-				st,pll = <&pll1_cfg2>;
+				hz = < 650000000 >;
+				st,clksrc = < CLK_MPU_PLL1P >;
+				st,pll = < &pll1_cfg1 >;
 			};
 		};
 	};
@@ -573,7 +579,6 @@
 &rng {
 	status = "okay";
 	clock-error-detect;
-	st,rng-config = <RNG_CONFIG_NIST_B_ID>;
 };
 
 &rtc {
@@ -586,41 +591,40 @@
 
 &scmi_regu {
 	scmi_vddcpu: voltd-vddcpu {
-		reg = <VOLTD_SCMI_STPMIC1_BUCK1>;
-		voltd-supply = <&vddcpu>;
+		voltd-name = "vddcpu";
+		regulator-name = "vddcpu";
 	};
 	scmi_vdd: voltd-vdd {
-		reg = <VOLTD_SCMI_STPMIC1_BUCK3>;
-		voltd-supply = <&vdd>;
+		voltd-name = "vdd";
+		regulator-name = "vdd";
 	};
 	scmi_vddcore: voltd-vddcore {
-		reg = <VOLTD_SCMI_STPMIC1_BUCK4>;
-		voltd-supply = <&vddcore>;
+		voltd-name = "vddcore";
+		regulator-name = "vddcore";
 	};
 	scmi_vdd_adc: voltd-vdd_adc {
-		reg = <VOLTD_SCMI_STPMIC1_LDO1>;
-		voltd-supply = <&vdd_adc>;
+		voltd-name = "vdd_adc";
+		regulator-name = "vdd_adc";
 	};
 	scmi_vdd_usb: voltd-vdd_usb {
-		reg = <VOLTD_SCMI_STPMIC1_LDO4>;
-		voltd-supply = <&vdd_usb>;
+		voltd-name = "vdd_usb";
+		regulator-name = "vdd_usb";
 	};
 	scmi_vdd_sd: voltd-vdd_sd {
-		reg = <VOLTD_SCMI_STPMIC1_LDO5>;
-		voltd-supply = <&vdd_sd>;
+		voltd-name = "vdd_sd";
+		regulator-name = "vdd_sd";
 	};
 	scmi_v1v8_periph: voltd-v1v8_periph {
-		reg = <VOLTD_SCMI_STPMIC1_LDO6>;
-		voltd-supply = <&v1v8_periph>;
+		voltd-name = "v1v8_periph";
+		regulator-name = "v1v8_periph";
 	};
 	scmi_v3v3_sw: voltd-v3v3_sw {
-		reg = <VOLTD_SCMI_STPMIC1_PWR_SW2>;
-		voltd-supply = <&v3v3_sw>;
+		voltd-name = "v3v3_sw";
+		regulator-name = "v3v3_sw";
 	};
 };
 
 &tamp {
-	status = "okay";
 	st,tamp_passive_nb_sample = <4>;
 	st,tamp_passive_sample_clk_div = <16384>;
 
@@ -629,7 +633,7 @@
 		status = "okay";
 	};
 
-	/* Connect pin8 and pin22 from CN8 */
+	/* Connect pin8 and pin22 from CN3 */
 	tamp_active@1 {
 		pinctrl-0 = <&tamp0_in3_pin_a &tamp0_out1_pin_a>;
 		status = "disabled";
@@ -645,7 +649,7 @@
 };
 
 &tzc400 {
-	memory-region = <&optee_framebuffer>;
+	memory-region =	<&optee_framebuffer>;
 };
 
 &uart4 {
@@ -661,7 +665,16 @@
 	status = "disabled";
 };
 
-&wakeup_pin_5 {
+&uart8 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart8_pins_a>;
+	status = "disabled";
+};
+
+&wakeup_pin_1 {
 	bias-pull-up;
 };
 
+&wakeup_pin_5 {
+	bias-pull-up;
+};

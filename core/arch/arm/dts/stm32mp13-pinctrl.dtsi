@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause)
 /*
- * Copyright (C) STMicroelectronics 2019-2022 - All Rights Reserved
+ * Copyright (C) STMicroelectronics 2019 - All Rights Reserved
  * Author: Alexandre Torgue <alexandre.torgue@st.com>
  */
 #include <dt-bindings/pinctrl/stm32-pinfunc.h>
@@ -13,6 +13,15 @@
 			bias-disable;
 			drive-open-drain;
 			slew-rate = <0>;
+		};
+	};
+
+	rcc_mco_pins_a: rcc-pins-0 {
+		pins {
+			pinmux = <STM32_PINMUX('D', 7, AF0)>; /* RCC_MCO_1 */
+			bias-disable;
+			drive-push-pull;
+			slew-rate = <1>;
 		};
 	};
 
@@ -43,15 +52,6 @@
 			bias-disable;
 			drive-push-pull;
 			slew-rate = <0>;
-		};
-	};
-
-	rcc_mco_pins_a: rcc-pins-0 {
-		pins {
-			pinmux = <STM32_PINMUX('D', 7, AF0)>; /* RCC_MCO_1 */
-			bias-disable;
-			drive-push-pull;
-			slew-rate = <1>;
 		};
 	};
 
@@ -121,6 +121,19 @@
 		pins2 {
 			pinmux = <STM32_PINMUX('B', 0, AF4)>, /* USART1_RX */
 				 <STM32_PINMUX('A', 7, AF7)>; /* USART1_CTS_NSS */
+			bias-pull-up;
+		};
+	};
+
+	uart8_pins_a: uart8-0 {
+		pins1 {
+			pinmux = <STM32_PINMUX('E', 1, AF8)>; /* UART8_TX */
+			bias-disable;
+			drive-push-pull;
+			slew-rate = <0>;
+		};
+		pins2 {
+			pinmux = <STM32_PINMUX('F', 9, AF8)>; /* UART8_RX */
 			bias-pull-up;
 		};
 	};

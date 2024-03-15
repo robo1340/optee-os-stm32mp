@@ -184,7 +184,6 @@ at91_clk_register_sam9x5_periph(struct pmc_data *pmc,
 	}
 
 	clk_sam9x5_peripheral_autodiv(clk);
-	pmc_register_id(id);
 
 	return clk;
 }

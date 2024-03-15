@@ -166,13 +166,13 @@ static void mobj_reg_shm_free(struct mobj *mobj)
 	}
 }
 
-static TEE_Result mobj_reg_shm_get_mem_type(struct mobj *mobj __unused,
-					    uint32_t *mt)
+static TEE_Result mobj_reg_shm_get_cattr(struct mobj *mobj __unused,
+					 uint32_t *cattr)
 {
-	if (!mt)
+	if (!cattr)
 		return TEE_ERROR_GENERIC;
 
-	*mt = TEE_MATTR_MEM_TYPE_CACHED;
+	*cattr = TEE_MATTR_CACHE_CACHED;
 
 	return TEE_SUCCESS;
 }
@@ -260,11 +260,11 @@ static uint64_t mobj_reg_shm_get_cookie(struct mobj *mobj)
  * shm mandates these resources to be unpaged.
  */
 const struct mobj_ops mobj_reg_shm_ops
-__weak __relrodata_unpaged("mobj_reg_shm_ops") = {
+__weak __rodata_unpaged("mobj_reg_shm_ops") = {
 	.get_pa = mobj_reg_shm_get_pa,
 	.get_phys_offs = mobj_reg_shm_get_phys_offs,
 	.get_va = mobj_reg_shm_get_va,
-	.get_mem_type = mobj_reg_shm_get_mem_type,
+	.get_cattr = mobj_reg_shm_get_cattr,
 	.matches = mobj_reg_shm_matches,
 	.free = mobj_reg_shm_free,
 	.get_cookie = mobj_reg_shm_get_cookie,

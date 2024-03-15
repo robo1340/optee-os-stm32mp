@@ -331,11 +331,6 @@ static TEE_Result etzpc_mode_from_cfg(const struct stm32_firewall_cfg *cfg,
 
 		switch (config->access & FWLL_MASTER_MASK) {
 		case FWLL_MASTER(0):
-			if (*attr != ETZPC_DECPROT_MAX) {
-				DMSG("Inconsistent configuration data");
-				return TEE_ERROR_BAD_PARAMETERS;
-			}
-
 			if (mode & FWLL_SEC_RW)
 				*attr = ETZPC_DECPROT_S_RW;
 
@@ -348,11 +343,6 @@ static TEE_Result etzpc_mode_from_cfg(const struct stm32_firewall_cfg *cfg,
 			break;
 #ifdef CFG_STM32MP15
 		case FWLL_MASTER(1):
-			if (*attr != ETZPC_DECPROT_MAX) {
-				DMSG("Inconsistent configuration data");
-				return TEE_ERROR_BAD_PARAMETERS;
-			}
-
 			/* No other configuration set */
 			if (mode & FWLL_FULL_ACCESS &&
 			    *attr == ETZPC_DECPROT_MAX)
@@ -483,8 +473,13 @@ static struct etzpc_device *stm32_etzpc_alloc(void)
 		return etzpc_dev;
 	}
 
-	free(ddata);
-	free(etzpc_dev);
+	if (ddata)
+		free(ddata);
+
+	if (etzpc_dev)
+		free(etzpc_dev);
+
+	etzpc_dev->lock = SPINLOCK_UNLOCK;
 
 	return NULL;
 }
@@ -492,10 +487,10 @@ static struct etzpc_device *stm32_etzpc_alloc(void)
 /* Informative unused function */
 static __unused void stm32_etzpc_free(struct etzpc_device *etzpc_dev)
 {
-	if (etzpc_dev) {
-		if (etzpc_dev->fdev)
-			stm32_firewall_dev_free(etzpc_dev->fdev);
+	if (etzpc_dev->fdev)
+		stm32_firewall_dev_free(etzpc_dev->fdev);
 
+	if (etzpc_dev) {
 		free(etzpc_dev->ddata);
 		free(etzpc_dev);
 	}
@@ -589,11 +584,11 @@ static TEE_Result init_etzpc_from_dt(struct etzpc_device *etzpc_dev,
 
 	etzpc_dev->pdata.periph_cfg =
 		calloc(etzpc_dev->ddata->num_per_sec,
-		       sizeof(*etzpc_dev->pdata.periph_cfg));
+		       sizeof(etzpc_dev->pdata.periph_cfg));
 
 	etzpc_dev->pdata.tzma_cfg =
 		calloc(etzpc_dev->ddata->num_tzma,
-		       sizeof(*etzpc_dev->pdata.tzma_cfg));
+		       sizeof(etzpc_dev->pdata.tzma_cfg));
 	if (!etzpc_dev->pdata.periph_cfg || !etzpc_dev->pdata.tzma_cfg)
 		return TEE_ERROR_OUT_OF_MEMORY;
 

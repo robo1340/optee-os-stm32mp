@@ -7,20 +7,12 @@
 #include <config.h>
 #include <drivers/scmi-msg.h>
 #include <kernel/pseudo_ta.h>
-#include <kernel/thread_private_arch.h>
 #include <optee_rpc_cmd.h>
 #include <pta_scmi_client.h>
 #include <stdint.h>
 #include <string.h>
+#include <tee/uuid.h>
 #include <util.h>
-
-struct msg_shm {
-	void *in_buf;
-	size_t in_size;
-	void *out_buf;
-	size_t out_size;
-	size_t out_max_size;
-};
 
 static bool valid_caps(unsigned int caps)
 {
@@ -40,9 +32,9 @@ static TEE_Result cmd_capabilities(uint32_t ptypes,
 		return TEE_ERROR_BAD_PARAMETERS;
 
 	if (IS_ENABLED(CFG_SCMI_MSG_SMT))
-		caps |= PTA_SCMI_CAPS_SMT_HEADER | PTA_SCMI_CAPS_OCALL2_THREAD;
-	if (IS_ENABLED(CFG_SCMI_MSG_SHM_MSG))
-		caps |= PTA_SCMI_CAPS_MSG_HEADER | PTA_SCMI_CAPS_OCALL2_THREAD;
+		caps |= PTA_SCMI_CAPS_SMT_HEADER;
+	if (IS_ENABLED(CFG_CORE_OCALL))
+		caps |= PTA_SCMI_CAPS_OCALL_THREAD;
 
 	param[0].value.a = caps;
 	param[0].value.b = 0;
@@ -115,77 +107,65 @@ static TEE_Result cmd_process_smt_message(uint32_t ptypes,
 	return TEE_ERROR_NOT_SUPPORTED;
 }
 
-static TEE_Result cmd_process_msg_channel(uint32_t ptypes,
-					  TEE_Param params[TEE_NUM_PARAMS])
+/* Process an OCALL RPC to client and report status */
+static enum optee_scmi_ocall_reply pta_scmi_ocall(uint32_t channel_id)
 {
+	static const TEE_UUID uuid = PTA_SCMI_UUID;
+	static uint64_t uuid_octet[2];
+	static bool uuid_ready;
+	struct thread_param params[THREAD_RPC_MAX_NUM_PARAMS] = {
+		/* Ocall command, sub command */
+		THREAD_PARAM_VALUE(INOUT, 0, 0, 0),
+		/* UUID of Ocall initiator */
+		THREAD_PARAM_VALUE(IN, 0, 0, 0),
+		/* Output value argument to get REE feedback */
+		THREAD_PARAM_VALUE(OUT, 0, 0, 0),
+	};
+	uint64_t ocall_res = 0;
+	uint64_t __maybe_unused ocall_ori = 0;
+	enum optee_scmi_ocall_reply agent_request = PTA_SCMI_OCALL_ERROR;
 	TEE_Result res = TEE_ERROR_GENERIC;
-	const uint32_t exp_pt = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
-						TEE_PARAM_TYPE_MEMREF_INPUT,
-						TEE_PARAM_TYPE_MEMREF_OUTPUT,
-						TEE_PARAM_TYPE_NONE);
-	unsigned int channel_id = params[0].value.a;
-	void *in_buf = params[1].memref.buffer;
-	size_t in_size = params[1].memref.size;
-	void *out_buf = params[2].memref.buffer;
-	size_t out_size = params[2].memref.size;
 
-	if (ptypes != exp_pt || !in_buf || !out_buf)
-		return TEE_ERROR_BAD_PARAMETERS;
+	if (!IS_ENABLED(CFG_CORE_OCALL))
+		return PTA_SCMI_OCALL_ERROR;
 
-	if (IS_ENABLED(CFG_SCMI_MSG_SHM_MSG)) {
-		struct scmi_msg_channel *channel = NULL;
-
-		channel = plat_scmi_get_channel(channel_id);
-		if (!channel)
-			return TEE_ERROR_BAD_PARAMETERS;
-
-		res = scmi_msg_threaded_entry(channel_id, in_buf, in_size,
-					      out_buf, &out_size);
-		if (!res)
-			params[2].memref.size = out_size;
-
-		return res;
+	if (!uuid_ready) {
+		tee_uuid_to_octets((uint8_t *)uuid_octet, &uuid);
+		uuid_ready = true;
 	}
 
-	return TEE_ERROR_NOT_SUPPORTED;
-}
+	params[0].u.value.a = PTA_SCMI_OCALL_CMD_THREAD_READY;
+	params[1].u.value.a = uuid_octet[0];
+	params[1].u.value.b = uuid_octet[1];
 
-/* Process an OCALL RPC to client and report status */
-static enum optee_scmi_ocall_reply pta_scmi_ocall(uint32_t channel_id,
-						  struct msg_shm *dyn_shm)
-{
-	uint32_t ocall2_params[2] = {
-		PTA_SCMI_OCALL_CMD_THREAD_READY,
-	};
+	params[0] = THREAD_PARAM_VALUE(INOUT, PTA_SCMI_OCALL_CMD_THREAD_READY,
+				       0, 0);
+	params[1] = THREAD_PARAM_VALUE(IN, uuid_octet[0], uuid_octet[1], 0);
+	params[2] = THREAD_PARAM_VALUE(OUT, 0, 0, 0);
 
-	if (dyn_shm)
-		ocall2_params[1] = dyn_shm->out_size;
-
-	if (thread_rpc_ocall2_cmd(ocall2_params)) {
-		DMSG("Error on channel %u"PRIu32, channel_id);
+	res = thread_rpc_cmd(OPTEE_RPC_CMD_OCALL, ARRAY_SIZE(params), params);
+	if (res) {
+		DMSG("Close thread on RPC error %#"PRIx32, res);
 		return PTA_SCMI_OCALL_ERROR;
 	}
 
-	switch (ocall2_params[0]) {
+	ocall_res = params[0].u.value.b;
+	ocall_ori = params[0].u.value.c;
+	if (ocall_res) {
+		DMSG("SCMI RPC thread failed %#"PRIx64" from %#"PRIx64,
+		     ocall_res, ocall_ori);
+		return PTA_SCMI_OCALL_ERROR;
+	}
+
+	agent_request = (enum optee_scmi_ocall_reply)params[2].u.value.a;
+
+	switch (agent_request) {
 	case PTA_SCMI_OCALL_PROCESS_SMT_CHANNEL:
-		FMSG("Posting SMT message on channel %u"PRIu32, channel_id);
-		if (!IS_ENABLED(CFG_SCMI_MSG_SMT) || dyn_shm)
-			return PTA_SCMI_OCALL_ERROR;
-
-		scmi_smt_threaded_entry(channel_id);
-		break;
-	case PTA_SCMI_OCALL_PROCESS_MSG_CHANNEL:
-		FMSG("Posting MSG message on channel %u"PRIu32, channel_id);
-		if (!IS_ENABLED(CFG_SCMI_MSG_SHM_MSG) || !dyn_shm)
-			return PTA_SCMI_OCALL_ERROR;
-
-		dyn_shm->in_size = ocall2_params[1];
-		dyn_shm->out_size = dyn_shm->out_max_size;
-
-		if (scmi_msg_threaded_entry(channel_id, dyn_shm->in_buf,
-					    dyn_shm->in_size, dyn_shm->out_buf,
-					    &dyn_shm->out_size))
-			return PTA_SCMI_OCALL_ERROR;
+		FMSG("Posting message on channel %u"PRIu32, channel_id);
+		if (IS_ENABLED(CFG_SCMI_MSG_SMT))
+			scmi_smt_threaded_entry(channel_id);
+		else
+			panic();
 		break;
 	case PTA_SCMI_OCALL_CLOSE_THREAD:
 		FMSG("Closing channel %u"PRIu32, channel_id);
@@ -195,15 +175,15 @@ static enum optee_scmi_ocall_reply pta_scmi_ocall(uint32_t channel_id,
 		break;
 	default:
 		DMSG("Invalid Ocall cmd %#x on channel %u"PRIu32,
-		     ocall2_params[1], channel_id);
-		return PTA_SCMI_OCALL_ERROR;
+		     agent_request, channel_id);
+		return PTA_SCMI_OCALL_CLOSE_THREAD;
 	}
 
-	return ocall2_params[0];
+	return agent_request;
 }
 
-static TEE_Result cmd_scmi_ocall_smt_thread(uint32_t ptypes,
-					    TEE_Param params[TEE_NUM_PARAMS])
+static TEE_Result cmd_scmi_ocall_thread(uint32_t ptypes,
+					TEE_Param params[TEE_NUM_PARAMS])
 {
 	const uint32_t exp_ptypes = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
 						    TEE_PARAM_TYPE_NONE,
@@ -216,59 +196,20 @@ static TEE_Result cmd_scmi_ocall_smt_thread(uint32_t ptypes,
 	if (ptypes != exp_ptypes)
 		return TEE_ERROR_BAD_PARAMETERS;
 
-	if (!IS_ENABLED(CFG_SCMI_MSG_SMT))
+	if (IS_ENABLED(CFG_SCMI_MSG_SMT))
+		channel = plat_scmi_get_channel(channel_id);
+	else
 		return TEE_ERROR_NOT_SUPPORTED;
 
-	channel = plat_scmi_get_channel(channel_id);
 	if (!channel)
 		return TEE_ERROR_BAD_PARAMETERS;
 
 	FMSG("Enter Ocall thread on channel %u"PRIu32, channel_id);
 	while (1) {
-		switch (pta_scmi_ocall(channel_id, NULL)) {
+		switch (pta_scmi_ocall(channel_id)) {
 		case PTA_SCMI_OCALL_PROCESS_SMT_CHANNEL:
 			continue;
 		case PTA_SCMI_OCALL_CLOSE_THREAD:
-			return TEE_SUCCESS;
-		default:
-			return TEE_ERROR_GENERIC;
-		}
-	}
-}
-
-static TEE_Result cmd_scmi_ocall_msg_thread(uint32_t ptypes,
-					    TEE_Param params[TEE_NUM_PARAMS])
-{
-	const uint32_t exp_pt = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
-						TEE_PARAM_TYPE_MEMREF_INPUT,
-						TEE_PARAM_TYPE_MEMREF_OUTPUT,
-						TEE_PARAM_TYPE_NONE);
-
-	struct msg_shm dyn_shm = {
-		.in_buf = params[1].memref.buffer,
-		.in_size = params[1].memref.size,
-		.out_buf = params[2].memref.buffer,
-		.out_max_size = params[2].memref.size,
-	};
-	unsigned int channel_id = params[0].value.a;
-	struct scmi_msg_channel *channel = NULL;
-
-	if (!IS_ENABLED(CFG_SCMI_MSG_SHM_MSG))
-		return TEE_ERROR_NOT_SUPPORTED;
-
-	if (ptypes != exp_pt || !dyn_shm.in_buf || !dyn_shm.out_buf)
-		return TEE_ERROR_BAD_PARAMETERS;
-
-	channel = plat_scmi_get_channel(channel_id);
-	if (!channel)
-		return TEE_ERROR_BAD_PARAMETERS;
-
-	while (1) {
-		switch (pta_scmi_ocall(channel_id, &dyn_shm)) {
-		case PTA_SCMI_OCALL_PROCESS_MSG_CHANNEL:
-			continue;
-		case PTA_SCMI_OCALL_CLOSE_THREAD:
-			params[2].memref.size =  dyn_shm.out_size;
 			return TEE_SUCCESS;
 		default:
 			return TEE_ERROR_GENERIC;
@@ -289,13 +230,10 @@ static TEE_Result cmd_get_channel_handle(uint32_t ptypes,
 	if (ptypes != exp_ptypes || !valid_caps(caps))
 		return TEE_ERROR_BAD_PARAMETERS;
 
-	if (IS_ENABLED(CFG_SCMI_MSG_DRIVERS)) {
+	if (IS_ENABLED(CFG_SCMI_MSG_SMT)) {
 		struct scmi_msg_channel *channel = NULL;
 
-		if ((!IS_ENABLED(CFG_SCMI_MSG_SMT) &&
-		     caps & PTA_SCMI_CAPS_SMT_HEADER) ||
-		    (!IS_ENABLED(CFG_SCMI_MSG_SHM_MSG) &&
-		     caps & PTA_SCMI_CAPS_MSG_HEADER))
+		if (!(caps & PTA_SCMI_CAPS_SMT_HEADER))
 			return TEE_ERROR_NOT_SUPPORTED;
 
 		channel = plat_scmi_get_channel(channel_id);
@@ -324,7 +262,7 @@ static TEE_Result pta_scmi_open_session(uint32_t ptypes __unused,
 		return TEE_ERROR_ACCESS_DENIED;
 	}
 
-	if (IS_ENABLED(CFG_SCMI_MSG_SMT) || IS_ENABLED(CFG_SCMI_MSG_SHM_MSG))
+	if (IS_ENABLED(CFG_SCMI_MSG_SMT))
 		return TEE_SUCCESS;
 
 	return TEE_ERROR_NOT_SUPPORTED;
@@ -343,14 +281,10 @@ static TEE_Result pta_scmi_invoke_command(void *session __unused, uint32_t cmd,
 		return cmd_process_smt_channel(ptypes, params);
 	case PTA_SCMI_CMD_PROCESS_SMT_CHANNEL_MESSAGE:
 		return cmd_process_smt_message(ptypes, params);
-	case PTA_SCMI_CMD_PROCESS_MSG_CHANNEL:
-		return cmd_process_msg_channel(ptypes, params);
 	case PTA_SCMI_CMD_GET_CHANNEL_HANDLE:
 		return cmd_get_channel_handle(ptypes, params);
-	case PTA_SCMI_CMD_OCALL2_SMT_THREAD:
-		return cmd_scmi_ocall_smt_thread(ptypes, params);
-	case PTA_SCMI_CMD_OCALL2_MSG_THREAD:
-		return cmd_scmi_ocall_msg_thread(ptypes, params);
+	case PTA_SCMI_CMD_OCALL_THREAD:
+		return cmd_scmi_ocall_thread(ptypes, params);
 	default:
 		return TEE_ERROR_NOT_SUPPORTED;
 	}

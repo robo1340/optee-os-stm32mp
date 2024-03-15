@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: BSD-2-Clause
 /*
- * Copyright (c) 2019-2022, STMicroelectronics
+ * Copyright (c) 2019-2021, STMicroelectronics
  */
 
 #include <config.h>
 #include <drivers/clk.h>
 #include <drivers/regulator.h>
-#include <drivers/stm32_bsec.h>
 #include <drivers/stm32mp_dt_bindings.h>
 #include <drivers/stm32mp1_syscfg.h>
 #include <initcall.h>
@@ -102,7 +101,7 @@ uint32_t stm32mp_syscfg_get_chip_dev_id(void)
 {
 	if (IS_ENABLED(CFG_STM32MP13))
 		return io_read32(get_syscfg_base() + SYSCFG_IDC) &
-		       SYSCFG_IDC_DEV_ID_MASK;
+			SYSCFG_IDC_DEV_ID_MASK;
 
 	return 0;
 }
@@ -110,7 +109,12 @@ uint32_t stm32mp_syscfg_get_chip_dev_id(void)
 static void enable_io_compensation(int cmpcr_offset)
 {
 	vaddr_t cmpcr_base = get_syscfg_base() + cmpcr_offset;
+	struct clk *csi_clk = stm32mp_rcc_clock_id_to_clk(CK_CSI);
+	struct clk *syscfg_clk = stm32mp_rcc_clock_id_to_clk(SYSCFG);
 	uint64_t timeout_ref = 0;
+
+	clk_enable(csi_clk);
+	clk_enable(syscfg_clk);
 
 	if (io_read32(cmpcr_base) & SYSCFG_CMPCR_READY)
 		return;
@@ -119,14 +123,12 @@ static void enable_io_compensation(int cmpcr_offset)
 
 	timeout_ref = timeout_init_us(SYSCFG_CMPCR_READY_TIMEOUT_US);
 
-	while (!(io_read32(cmpcr_base) & SYSCFG_CMPCR_READY)) {
+	while (!(io_read32(cmpcr_base) & SYSCFG_CMPCR_READY))
 		if (timeout_elapsed(timeout_ref)) {
-			if (!(io_read32(cmpcr_base) & SYSCFG_CMPCR_READY))
-				EMSG("IO compensation cell not ready");
+			EMSG("IO compensation cell not ready");
 			/* Allow an almost silent failure here */
 			break;
 		}
-	}
 
 	io_clrbits32(cmpcr_base, SYSCFG_CMPCR_SW_CTRL);
 
@@ -136,9 +138,15 @@ static void enable_io_compensation(int cmpcr_offset)
 static void disable_io_compensation(int cmpcr_offset)
 {
 	vaddr_t cmpcr_base = get_syscfg_base() + cmpcr_offset;
+	struct clk *csi_clk = stm32mp_rcc_clock_id_to_clk(CK_CSI);
+	struct clk *syscfg_clk = stm32mp_rcc_clock_id_to_clk(SYSCFG);
 	uint32_t value_cmpcr = 0;
-	uint32_t apsrc_ansrc = 0;
 	uint32_t value_cmpcr2 = 0;
+
+	assert(csi_clk && syscfg_clk);
+
+	/* No refcount balance needed on non-secure SYSCFG clock */
+	clk_enable(syscfg_clk);
 
 	value_cmpcr = io_read32(cmpcr_base);
 	value_cmpcr2 = io_read32(cmpcr_base + CMPENSETR_OFFSET);
@@ -146,16 +154,21 @@ static void disable_io_compensation(int cmpcr_offset)
 	      value_cmpcr2 & SYSCFG_CMPENSETR_MPU_EN))
 		return;
 
-	/* copy apsrc / ansrc in ransrc /rapsrc */
-	apsrc_ansrc = value_cmpcr >> SYSCFG_CMPCR_ANSRC_SHIFT;
-	value_cmpcr &= ~(SYSCFG_CMPCR_RANSRC | SYSCFG_CMPCR_RAPSRC);
-	value_cmpcr |= apsrc_ansrc << SYSCFG_CMPCR_RANSRC_SHIFT;
+	value_cmpcr = io_read32(cmpcr_base) >> SYSCFG_CMPCR_ANSRC_SHIFT;
+
+	io_clrbits32(cmpcr_base, SYSCFG_CMPCR_RANSRC | SYSCFG_CMPCR_RAPSRC);
+
+	value_cmpcr <<= SYSCFG_CMPCR_RANSRC_SHIFT;
+	value_cmpcr |= io_read32(cmpcr_base);
 
 	io_write32(cmpcr_base, value_cmpcr | SYSCFG_CMPCR_SW_CTRL);
 
 	DMSG("SYSCFG.cmpcr = %#"PRIx32, io_read32(cmpcr_base));
 
 	io_setbits32(cmpcr_base + CMPENCLRR_OFFSET, SYSCFG_CMPENSETR_MPU_EN);
+
+	clk_disable(syscfg_clk);
+	clk_disable(csi_clk);
 }
 
 TEE_Result stm32mp_syscfg_erase_sram3(void)
@@ -191,33 +204,33 @@ TEE_Result stm32mp_syscfg_erase_sram3(void)
 	return TEE_SUCCESS;
 }
 
-static TEE_Result stm32mp_syscfg_enable_io_compensation(void)
+void stm32mp_syscfg_enable_io_compensation(void)
 {
-	if (clk_enable(stm32mp_rcc_clock_id_to_clk(CK_CSI)) ||
-	    clk_enable(stm32mp_rcc_clock_id_to_clk(SYSCFG)))
-		panic();
-
 	enable_io_compensation(SYSCFG_CMPCR);
+
+	if (IS_ENABLED(CFG_STM32MP13)) {
+		enable_io_compensation(SYSCFG_CMPSD1CR);
+		enable_io_compensation(SYSCFG_CMPSD2CR);
+	}
+}
+
+void stm32mp_syscfg_disable_io_compensation(void)
+{
+	disable_io_compensation(SYSCFG_CMPCR);
+
+	if (IS_ENABLED(CFG_STM32MP13)) {
+		disable_io_compensation(SYSCFG_CMPSD1CR);
+		disable_io_compensation(SYSCFG_CMPSD2CR);
+	}
+}
+
+static TEE_Result stm32mp1_iocomp(void)
+{
+	stm32mp_syscfg_enable_io_comp();
 
 	return TEE_SUCCESS;
 }
-
-driver_init(stm32mp_syscfg_enable_io_compensation);
-
-void stm32mp_set_io_comp_by_index(uint32_t index, bool state)
-{
-	int cmpcr_offset = SYSCFG_CMPSD1CR;
-
-	assert(index < SYSCFG_IO_COMP_NB_IDX);
-
-	if (index == SYSCFG_IO_COMP_IDX_SD2)
-		cmpcr_offset = SYSCFG_CMPSD2CR;
-
-	if (state)
-		enable_io_compensation(cmpcr_offset);
-	else
-		disable_io_compensation(cmpcr_offset);
-}
+driver_init(stm32mp1_iocomp);
 
 void stm32mp_set_hslv_by_index(uint32_t index, bool state)
 {
@@ -282,8 +295,7 @@ static TEE_Result stm32mp_syscfg_set_hslv(void)
 	 *   => TF-A enables the low power mode only if VDD < 2.7V (in DT)
 	 *      but this value needs to be consistent with board design.
 	 */
-	res = stm32_bsec_find_otp_in_nvmem_layout("hw2_otp", &otp_id,
-						  NULL, NULL);
+	res = stm32_bsec_find_otp_in_nvmem_layout("hw2_otp", &otp_id, NULL);
 	if (res)
 		panic();
 

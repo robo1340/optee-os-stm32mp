@@ -159,7 +159,7 @@ static TEE_Result gpio_regulator_probe(const void *fdt, int node,
 
 	reg_name = fdt_get_name(fdt, node, NULL);
 	len = snprintf(gr->name, sizeof(gr->name) - 1, "%s", reg_name);
-	if (len <= 0 ||  (len >= (sizeof(gr->name) - 1))) {
+	if ((len <= 0) ||  (len >= (sizeof(gr->name) - 1))) {
 		res = TEE_ERROR_BAD_PARAMETERS;
 		goto err;
 	}

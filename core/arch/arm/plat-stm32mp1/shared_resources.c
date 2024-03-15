@@ -4,18 +4,21 @@
  */
 
 #include <config.h>
-#include <drivers/stm32_bsec.h>
 #include <drivers/stm32_etzpc.h>
-#include <drivers/stm32_firewall.h>
 #include <drivers/stm32_gpio.h>
-#include <drivers/stm32mp1_rcc.h>
 #include <drivers/stm32mp_dt_bindings.h>
+#ifdef CFG_STM32MP13
+#include <drivers/stm32mp13_rcc.h>
+#else /* assume CFG_STM32MP15 */
+#include <drivers/stm32mp1_rcc.h>
+#endif
 #include <initcall.h>
 #include <io.h>
 #include <keep.h>
 #include <kernel/boot.h>
 #include <kernel/panic.h>
 #include <kernel/pm.h>
+#include <kernel/spinlock.h>
 #include <libfdt.h>
 #include <mm/core_memprot.h>
 #include <platform_config.h>
@@ -27,7 +30,41 @@
  * Once one starts to get the resource registering state, one cannot register
  * new resources. This ensures resource state cannot change.
  */
-static bool registering_locked;
+static bool registering_locked __unused;
+
+/*
+ * Shared register access: upon shared resource lock
+ */
+static unsigned int shregs_lock = SPINLOCK_UNLOCK;
+
+/* Shared resource lock: assume not required if MMU is disabled */
+static uint32_t lock_stm32shregs(void)
+{
+	return may_spin_lock(&shregs_lock);
+}
+
+static void unlock_stm32shregs(uint32_t exceptions)
+{
+	may_spin_unlock(&shregs_lock, exceptions);
+}
+
+void io_mask32_stm32shregs(vaddr_t va, uint32_t value, uint32_t mask)
+{
+	uint32_t exceptions = lock_stm32shregs();
+
+	io_mask32(va, value, mask);
+
+	unlock_stm32shregs(exceptions);
+}
+
+void io_clrsetbits32_stm32shregs(vaddr_t va, uint32_t clr, uint32_t set)
+{
+	uint32_t exceptions = lock_stm32shregs();
+
+	io_clrsetbits32(va, clr, set);
+
+	unlock_stm32shregs(exceptions);
+}
 
 /*
  * Shared peripherals and resources registration
@@ -50,9 +87,38 @@ enum shres_state {
 };
 
 /* Use a byte array to store each resource state */
-static uint8_t shres_state[STM32MP1_SHRES_COUNT];
+static uint8_t shres_state[STM32MP1_SHRES_COUNT] __maybe_unused = {
+#ifdef CFG_STM32MP15
+#if !defined(CFG_STM32_IWDG)
+	[STM32MP1_SHRES_IWDG1] = SHRES_NON_SECURE,
+#endif
+#if !defined(CFG_STM32_UART)
+	[STM32MP1_SHRES_USART1] = SHRES_NON_SECURE,
+#endif
+#if !defined(CFG_STM32_SPI)
+	[STM32MP1_SHRES_SPI6] = SHRES_NON_SECURE,
+#endif
+#if !defined(CFG_STM32_I2C)
+	[STM32MP1_SHRES_I2C4] = SHRES_NON_SECURE,
+	[STM32MP1_SHRES_I2C6] = SHRES_NON_SECURE,
+#endif
+#if !defined(CFG_STM32_RNG)
+	[STM32MP1_SHRES_RNG1] = SHRES_NON_SECURE,
+#endif
+#if !defined(CFG_STM32_HASH)
+	[STM32MP1_SHRES_HASH1] = SHRES_NON_SECURE,
+#endif
+#if !defined(CFG_STM32_CRYP)
+	[STM32MP1_SHRES_CRYP1] = SHRES_NON_SECURE,
+#endif
+#if !defined(CFG_STM32_RTC)
+	[STM32MP1_SHRES_RTC] = SHRES_NON_SECURE,
+#endif
+#endif
+};
 
 static const char __maybe_unused *shres2str_id_tbl[STM32MP1_SHRES_COUNT] = {
+#ifdef CFG_STM32MP15
 	[STM32MP1_SHRES_IWDG1] = "IWDG1",
 	[STM32MP1_SHRES_USART1] = "USART1",
 	[STM32MP1_SHRES_SPI6] = "SPI6",
@@ -64,6 +130,7 @@ static const char __maybe_unused *shres2str_id_tbl[STM32MP1_SHRES_COUNT] = {
 	[STM32MP1_SHRES_RTC] = "RTC",
 	[STM32MP1_SHRES_MCU] = "MCU",
 	[STM32MP1_SHRES_PLL3] = "PLL3",
+#endif
 	[STM32MP1_SHRES_MDMA] = "MDMA",
 };
 
@@ -83,6 +150,7 @@ static __maybe_unused const char *shres2str_state(enum shres_state id)
 	return shres2str_state_tbl[id];
 }
 
+#ifdef CFG_STM32MP15
 static void register_periph(enum stm32mp_shres id, enum shres_state state)
 {
 	assert(id < STM32MP1_SHRES_COUNT &&
@@ -235,6 +303,20 @@ bool stm32mp_periph_is_secure(enum stm32mp_shres id)
 
 	return shres_state[id] == SHRES_SECURE;
 }
+#else
+void stm32mp_register_secure_periph_iomem(vaddr_t base __maybe_unused)
+{
+}
+
+void stm32mp_register_non_secure_periph_iomem(vaddr_t base __maybe_unused)
+{
+}
+
+bool stm32mp_periph_is_secure(enum stm32mp_shres id __maybe_unused)
+{
+	return true;
+}
+#endif /* CFG_STM32MP15 */
 
 bool stm32mp_nsec_can_access_clock(unsigned long clock_id)
 {
@@ -261,11 +343,44 @@ bool stm32mp_nsec_can_access_clock(unsigned long clock_id)
 		return true;
 
 	switch (clock_id) {
-	case RTCAPB:
-	case CK_MPU:
-	case CK_AXI:
 	case BSEC:
+	case CK_AXI:
+	case CK_CSI:
+	case CK_HSE:
+	case CK_HSE_DIV2:
+	case CK_HSI:
+	case CK_LSE:
+	case CK_LSI:
+	case CK_MPU:
+	case PLL1_P:
+	case PLL1_Q:
+	case PLL1_R:
+	case PLL2_P:
+	case PLL2_Q:
+	case PLL2_R:
+	case PLL3_P:
+	case PLL3_Q:
+	case PLL3_R:
+	case RTCAPB:
+#ifdef CFG_STM32MP13
+	case CK_MLAHB:
+	case CK_PER:
+	case PLL4_P:
+	case PLL4_Q:
+	case PLL4_R:
+	case PCLK1:
+	case PCLK2:
+	case PCLK3:
+	case PCLK4:
+	case PCLK5:
+	case PCLK6:
+	case CK_TIMG1:
+	case CK_TIMG2:
+	case CK_TIMG3:
+	case RTC:
+#endif
 		return true;
+#ifdef CFG_STM32MP15
 	case GPIOZ:
 		return true;
 	case SPI6_K:
@@ -298,6 +413,7 @@ bool stm32mp_nsec_can_access_clock(unsigned long clock_id)
 	case CK_MCU:
 		shres_id = STM32MP1_SHRES_MCU;
 		break;
+#endif
 	default:
 		return false;
 	}
@@ -305,6 +421,49 @@ bool stm32mp_nsec_can_access_clock(unsigned long clock_id)
 	return !stm32mp_periph_is_secure(shres_id);
 }
 
+bool stm32mp_nsec_can_access_reset(unsigned int reset_id)
+{
+	enum stm32mp_shres shres_id = STM32MP1_SHRES_COUNT;
+
+	switch (reset_id) {
+#ifdef CFG_STM32MP15
+	case SPI6_R:
+		shres_id = STM32MP1_SHRES_SPI6;
+		break;
+	case I2C4_R:
+		shres_id = STM32MP1_SHRES_I2C4;
+		break;
+	case I2C6_R:
+		shres_id = STM32MP1_SHRES_I2C6;
+		break;
+	case USART1_R:
+		shres_id = STM32MP1_SHRES_USART1;
+		break;
+	case CRYP1_R:
+		shres_id = STM32MP1_SHRES_CRYP1;
+		break;
+	case HASH1_R:
+		shres_id = STM32MP1_SHRES_HASH1;
+		break;
+	case RNG1_R:
+		shres_id = STM32MP1_SHRES_RNG1;
+		break;
+	case MCU_R:
+	case MCU_HOLD_BOOT_R:
+		shres_id = STM32MP1_SHRES_MCU;
+		break;
+#endif
+	case MDMA_R:
+		shres_id = STM32MP1_SHRES_MDMA;
+		break;
+	default:
+		return false;
+	}
+
+	return !stm32mp_periph_is_secure(shres_id);
+}
+
+#ifdef CFG_STM32MP15
 static bool mckprot_resource(enum stm32mp_shres id)
 {
 	switch (id) {
@@ -353,79 +512,6 @@ static void check_rcc_secure_configuration(void)
 	stm32mp1_clk_mcuss_protect(need_mckprot);
 }
 
-static vaddr_t stm32mp_get_base_from_shres_id(enum stm32mp_shres id)
-{
-	vaddr_t base = 0;
-
-	switch (id) {
-	case STM32MP1_SHRES_IWDG1:
-		base = IWDG1_BASE;
-		break;
-	case STM32MP1_SHRES_USART1:
-		base = USART1_BASE;
-		break;
-	case STM32MP1_SHRES_SPI6:
-		base = SPI6_BASE;
-		break;
-	case STM32MP1_SHRES_I2C4:
-		base = I2C4_BASE;
-		break;
-	case STM32MP1_SHRES_I2C6:
-		base = I2C6_BASE;
-		break;
-	case STM32MP1_SHRES_RTC:
-		base = RTC_BASE;
-		break;
-	case STM32MP1_SHRES_RNG1:
-		base = RNG1_BASE;
-		break;
-	case STM32MP1_SHRES_CRYP1:
-		base = CRYP1_BASE;
-		break;
-	case STM32MP1_SHRES_HASH1:
-		base = HASH1_BASE;
-		break;
-	default:
-		base = 0;
-	}
-
-	return base;
-}
-
-static void check_iomem_firewall_configuration(void)
-{
-	TEE_Result res = TEE_SUCCESS;
-	bool firewall_is_ns = false;
-	bool shres_is_ns = false;
-	enum stm32mp_shres id = 0;
-	paddr_t base = 0;
-	const struct stm32_firewall_cfg nsec_cfg[] = {
-		{ FWLL_NSEC_RW | FWLL_MASTER(0) },
-		{ }, /* Null terminated */
-	};
-
-	for (id = 0; id < STM32MP1_SHRES_COUNT; id++) {
-		if (shres_state[id] == SHRES_UNREGISTERED)
-			continue;
-
-		shres_is_ns = !stm32mp_periph_is_secure(id);
-
-		base = stm32mp_get_base_from_shres_id(id);
-		if (!base) {
-			DMSG("Shared resource %d not a IOmem entry", id);
-			continue;
-		}
-
-		res = stm32_firewall_check_access(base, 0, nsec_cfg);
-		firewall_is_ns = (res == TEE_SUCCESS);
-
-		if (firewall_is_ns != shres_is_ns) {
-			EMSG("mismatch config for id : %d", id);
-			panic();
-		}
-	}
-}
-
 static TEE_Result stm32mp1_init_final_shres(void)
 {
 	enum stm32mp_shres id = STM32MP1_SHRES_COUNT;
@@ -441,9 +527,8 @@ static TEE_Result stm32mp1_init_final_shres(void)
 
 	check_rcc_secure_configuration();
 
-	check_iomem_firewall_configuration();
-
 	return TEE_SUCCESS;
 }
 /* Finalize shres after drivers initialization, hence driver_init_late() */
 driver_init_late(stm32mp1_init_final_shres);
+#endif

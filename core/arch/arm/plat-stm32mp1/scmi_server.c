@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 /*
- * Copyright (c) 2019-2022, STMicroelectronics
+ * Copyright (c) 2019-2021, STMicroelectronics
  */
 #include <assert.h>
 #include <compiler.h>
@@ -8,7 +8,6 @@
 #include <confine_array_index.h>
 #include <drivers/clk.h>
 #include <drivers/clk_dt.h>
-#include <drivers/rstctrl.h>
 #include <drivers/scmi-msg.h>
 #include <drivers/scmi.h>
 #include <drivers/stm32_firewall.h>
@@ -48,13 +47,11 @@ struct stm32_scmi_clk {
  * @reset_id: Reset identifier in RCC reset driver
  * @base: Physical controller address
  * @name: Reset string ID exposed to channel
- * @rstctrl: Reset controller device
  */
 struct stm32_scmi_rd {
 	unsigned long reset_id;
 	paddr_t base;
 	const char *name;
-	struct rstctrl *rstctrl;
 };
 
 /*
@@ -65,19 +62,46 @@ struct stm32_scmi_perfd {
 	const char *name;
 };
 
+/* Locate all non-secure SMT message buffers in last page of SYSRAM */
+#define SMT_BUFFER_BASE		CFG_STM32MP1_SCMI_SHM_BASE
+#define SMT_BUFFER0_BASE	SMT_BUFFER_BASE
+
+#if (SMT_BUFFER0_BASE + SMT_BUF_SLOT_SIZE > \
+	CFG_STM32MP1_SCMI_SHM_BASE + CFG_STM32MP1_SCMI_SHM_SIZE)
+#error "SCMI shared memory mismatch"
+#endif
+
+register_phys_mem(MEM_AREA_IO_NSEC, CFG_STM32MP1_SCMI_SHM_BASE,
+		  CFG_STM32MP1_SCMI_SHM_SIZE);
+
 #define CLOCK_CELL(_scmi_id, _id, _name, _init_enabled) \
-	[(_scmi_id)] = { \
-		.clock_id = (_id), \
-		.name = (_name), \
-		.enabled = (_init_enabled), \
+	[_scmi_id] = { \
+		.clock_id = _id, \
+		.name = _name, \
+		.enabled = _init_enabled, \
 	}
 
 #define RESET_CELL(_scmi_id, _id, _base, _name) \
-	[(_scmi_id)] = { \
-		.reset_id = (_id), \
-		.base = (_base), \
+	[_scmi_id] = { \
+		.reset_id = _id, \
+		.base = _base, \
+		.name = _name, \
+	}
+
+#define PERFD_CELL(_scmi_id, _name) \
+	[_scmi_id] = { \
 		.name = (_name), \
 	}
+
+struct channel_resources {
+	struct scmi_msg_channel *channel;
+	struct stm32_scmi_clk *clock;
+	size_t clock_count;
+	struct stm32_scmi_rd *rd;
+	size_t rd_count;
+	struct stm32_scmi_perfd *perfd;
+	size_t perfd_count;
+};
 
 #ifdef CFG_STM32MP13
 static struct stm32_scmi_clk stm32_scmi_clock[] = {
@@ -112,7 +136,45 @@ static struct stm32_scmi_clk stm32_scmi_clock[] = {
 	CLOCK_CELL(CK_SCMI_RTCAPB, RTCAPB, "rtcapb", true),
 	CLOCK_CELL(CK_SCMI_BSEC, BSEC, "bsec", true),
 };
+
+static struct stm32_scmi_rd stm32_scmi_reset_domain[] = {
+	RESET_CELL(RST_SCMI_LTDC, LTDC_R, LTDC_BASE, "ltdc"),
+	RESET_CELL(RST_SCMI_MDMA, MDMA_R, MDMA_BASE, "mdma"),
+};
+
+struct stm32_scmi_perfd scmi_performance_domain[] = {
+	PERFD_CELL(0 /* PERFD_SCMI_CPU_OPP */, "cpu-opp"),
+};
+
+/* Currently supporting Clocks and Reset Domains */
+static const uint8_t plat_protocol_list[] = {
+	SCMI_PROTOCOL_ID_CLOCK,
+	SCMI_PROTOCOL_ID_RESET_DOMAIN,
+#ifdef CFG_SCMI_MSG_REGULATOR_CONSUMER
+	SCMI_PROTOCOL_ID_VOLTAGE_DOMAIN,
 #endif
+#ifdef CFG_SCMI_MSG_PERF_DOMAIN
+	SCMI_PROTOCOL_ID_PERF,
+#endif
+	0 /* Null termination */
+};
+
+static const struct channel_resources scmi_channel[] = {
+	[0] = {
+		.channel = &(struct scmi_msg_channel){
+			.shm_addr = { .pa = SMT_BUFFER0_BASE },
+			.shm_size = SMT_BUF_SLOT_SIZE,
+		},
+		.clock = stm32_scmi_clock,
+		.clock_count = ARRAY_SIZE(stm32_scmi_clock),
+		.rd = stm32_scmi_reset_domain,
+		.rd_count = ARRAY_SIZE(stm32_scmi_reset_domain),
+		.perfd = scmi_performance_domain,
+		.perfd_count = ARRAY_SIZE(scmi_performance_domain),
+	},
+};
+
+#endif /* CFG_STM32MP13 */
 
 #ifdef CFG_STM32MP15
 static struct stm32_scmi_clk stm32_scmi_clock[] = {
@@ -138,16 +200,7 @@ static struct stm32_scmi_clk stm32_scmi_clock[] = {
 	CLOCK_CELL(CK_SCMI_SPI6, SPI6_K, "spi6_k", false),
 	CLOCK_CELL(CK_SCMI_USART1, USART1_K, "usart1_k", false),
 };
-#endif
 
-#ifdef CFG_STM32MP13
-static struct stm32_scmi_rd stm32_scmi_reset_domain[] = {
-	RESET_CELL(RST_SCMI_LTDC, LTDC_R, LTDC_BASE, "ltdc"),
-	RESET_CELL(RST_SCMI_MDMA, MDMA_R, MDMA_BASE, "mdma"),
-};
-#endif
-
-#ifdef CFG_STM32MP15
 static struct stm32_scmi_rd stm32_scmi_reset_domain[] = {
 	RESET_CELL(RST_SCMI_SPI6, SPI6_R, SPI6_BASE, "spi6"),
 	RESET_CELL(RST_SCMI_I2C4, I2C4_R, I2C4_BASE, "i2c4"),
@@ -163,42 +216,30 @@ static struct stm32_scmi_rd stm32_scmi_reset_domain[] = {
 	RESET_CELL(RST_SCMI_MCU_HOLD_BOOT, MCU_HOLD_BOOT_R, 0,
 		   "mcu_hold_boot"),
 };
+
+/* Currently supporting Clocks and Reset Domains */
+static const uint8_t plat_protocol_list[] = {
+	SCMI_PROTOCOL_ID_CLOCK,
+	SCMI_PROTOCOL_ID_RESET_DOMAIN,
+#ifdef CFG_SCMI_MSG_REGULATOR_CONSUMER
+	SCMI_PROTOCOL_ID_VOLTAGE_DOMAIN,
 #endif
-
-struct channel_resources {
-	struct scmi_msg_channel *channel;
-	struct stm32_scmi_clk *clock;
-	size_t clock_count;
-	struct stm32_scmi_rd *rd;
-	size_t rd_count;
-#ifdef CFG_SCMI_MSG_PERF_DOMAIN
-	struct stm32_scmi_perfd *perfd;
-	size_t perfd_count;
-#endif
-};
-
-#define PERFD_CELL(_scmi_id, _name) \
-	[_scmi_id] = { \
-		.name = (_name), \
-	}
-
-struct stm32_scmi_perfd scmi_performance_domain[] = {
-	PERFD_CELL(0 /* PERFD_SCMI0_CPU_OPP */, "cpu-opp"),
+	0 /* Null termination */
 };
 
 static const struct channel_resources scmi_channel[] = {
 	[0] = {
-		.channel = &(struct scmi_msg_channel){ },
+		.channel = &(struct scmi_msg_channel){
+			.shm_addr = { .pa = SMT_BUFFER0_BASE },
+			.shm_size = SMT_BUF_SLOT_SIZE,
+		},
 		.clock = stm32_scmi_clock,
 		.clock_count = ARRAY_SIZE(stm32_scmi_clock),
 		.rd = stm32_scmi_reset_domain,
 		.rd_count = ARRAY_SIZE(stm32_scmi_reset_domain),
-#ifdef CFG_SCMI_MSG_PERF_DOMAIN
-		.perfd = scmi_performance_domain,
-		.perfd_count = ARRAY_SIZE(scmi_performance_domain),
-#endif
 	},
 };
+#endif /* CFG_STM32MP15 */
 
 static const struct channel_resources *find_resource(unsigned int channel_id)
 {
@@ -243,13 +284,11 @@ static size_t __maybe_unused plat_scmi_protocol_count_paranoid(void)
 	if (n < channel_count)
 		count++;
 
-#ifdef CFG_SCMI_MSG_PERF_DOMAIN
 	for (n = 0; n < channel_count; n++)
 		if (scmi_channel[n].perfd_count)
 			break;
 	if (n < channel_count)
 		count++;
-#endif
 
 	return count;
 }
@@ -266,19 +305,6 @@ const char *plat_scmi_sub_vendor_name(void)
 {
 	return sub_vendor;
 }
-
-/* Currently supporting Clocks and Reset Domains */
-static const uint8_t plat_protocol_list[] = {
-	SCMI_PROTOCOL_ID_CLOCK,
-	SCMI_PROTOCOL_ID_RESET_DOMAIN,
-#ifdef CFG_SCMI_MSG_REGULATOR_CONSUMER
-	SCMI_PROTOCOL_ID_VOLTAGE_DOMAIN,
-#endif
-#ifdef CFG_SCMI_MSG_PERF_DOMAIN
-	SCMI_PROTOCOL_ID_PERF,
-#endif
-	0 /* Null termination */
-};
 
 size_t plat_scmi_protocol_count(void)
 {
@@ -544,7 +570,6 @@ int32_t plat_scmi_rd_autonomous(unsigned int channel_id, unsigned int scmi_id,
 
 	if (rd->base && stm32_firewall_check_access(rd->base, 0, nsec_cfg))
 		return SCMI_DENIED;
-	assert(rd->rstctrl);
 
 #ifdef CFG_STM32MP15
 	if (rd->reset_id == MCU_HOLD_BOOT_R)
@@ -557,10 +582,10 @@ int32_t plat_scmi_rd_autonomous(unsigned int channel_id, unsigned int scmi_id,
 
 	FMSG("SCMI reset %u cycle", scmi_id);
 
-	if (rstctrl_assert_to(rd->rstctrl, TIMEOUT_US_1MS))
+	if (stm32_reset_assert(rd->reset_id, TIMEOUT_US_1MS))
 		return SCMI_HARDWARE_ERROR;
 
-	if (rstctrl_deassert_to(rd->rstctrl, TIMEOUT_US_1MS))
+	if (stm32_reset_deassert(rd->reset_id, TIMEOUT_US_1MS))
 		return SCMI_HARDWARE_ERROR;
 
 	return SCMI_SUCCESS;
@@ -574,25 +599,29 @@ int32_t plat_scmi_rd_set_state(unsigned int channel_id, unsigned int scmi_id,
 		{ FWLL_NSEC_RW | FWLL_MASTER(0) },
 		{ }, /* Null terminated */
 	};
-	TEE_Result res = TEE_ERROR_GENERIC;
 
 	if (!rd)
 		return SCMI_NOT_FOUND;
 
 	if (rd->base && stm32_firewall_check_access(rd->base, 0, nsec_cfg))
 		return SCMI_DENIED;
-	assert(rd->rstctrl);
+
+#ifdef CFG_STM32MP15
+	if (rd->reset_id == MCU_HOLD_BOOT_R) {
+		FMSG("SCMI MCU hold boot %s",
+		     assert_not_deassert ? "set" : "release");
+		stm32_reset_assert_deassert_mcu(assert_not_deassert);
+		return SCMI_SUCCESS;
+	}
+#endif
 
 	if (assert_not_deassert) {
 		FMSG("SCMI reset %u set", scmi_id);
-		res = rstctrl_assert(rd->rstctrl);
+		stm32_reset_set(rd->reset_id);
 	} else {
 		FMSG("SCMI reset %u release", scmi_id);
-		res = rstctrl_deassert(rd->rstctrl);
+		stm32_reset_release(rd->reset_id);
 	}
-
-	if (res)
-		return SCMI_HARDWARE_ERROR;
 
 	return SCMI_SUCCESS;
 }
@@ -715,17 +744,16 @@ int32_t plat_scmi_perf_level_set(unsigned int channel_id,
 static TEE_Result stm32_scmi_pm(enum pm_op op, unsigned int pm_hint __unused,
 				const struct pm_callback_handle *hdl __unused)
 {
-	struct scmi_msg_channel *chan = NULL;
 	size_t i = 0;
 
-	if (op == PM_OP_RESUME) {
+	if (op == PM_OP_RESUME)
 		for (i = 0; i < ARRAY_SIZE(scmi_channel); i++) {
-			chan = plat_scmi_get_channel(i);
-			assert(chan);
-			if (chan->shm_addr.va)
-				scmi_smt_init_agent_channel(chan);
+			struct scmi_msg_channel *chan = plat_scmi_get_channel(i);
+
+			assert(chan && chan->shm_addr.va);
+
+			scmi_smt_init_agent_channel(chan);
 		}
-	}
 
 	return TEE_SUCCESS;
 }
@@ -747,14 +775,11 @@ static TEE_Result stm32mp1_init_scmi_server(void)
 		size_t voltd_count = 0;
 
 		/* Enforce non-secure shm mapped as device memory */
-		if (chan->shm_addr.pa) {
-			chan->shm_addr.va =
-				(vaddr_t)phys_to_virt(chan->shm_addr.pa,
-						      MEM_AREA_IO_NSEC,
-						      chan->shm_size);
-			assert(chan->shm_addr.va);
-			scmi_smt_init_agent_channel(chan);
-		}
+		chan->shm_addr.va = (vaddr_t)phys_to_virt(chan->shm_addr.pa,
+							  MEM_AREA_IO_NSEC, 1);
+		assert(chan->shm_addr.va);
+
+		scmi_smt_init_agent_channel(chan);
 
 		for (j = 0; j < res->clock_count; j++) {
 			struct stm32_scmi_clk *clk = &res->clock[j];
@@ -774,16 +799,10 @@ static TEE_Result stm32mp1_init_scmi_server(void)
 
 		for (j = 0; j < res->rd_count; j++) {
 			struct stm32_scmi_rd *rd = &res->rd[j];
-			struct rstctrl *rstctrl = NULL;
 
 			if (!rd->name ||
 			    strlen(rd->name) >= SCMI_RD_NAME_SIZE)
 				panic("SCMI reset domain name invalid");
-
-			rstctrl = stm32mp_rcc_reset_id_to_rstctrl(rd->reset_id);
-			assert(rstctrl);
-
-			rd->rstctrl = rstctrl;
 		}
 
 		if (IS_ENABLED(CFG_SCMI_MSG_REGULATOR_CONSUMER))

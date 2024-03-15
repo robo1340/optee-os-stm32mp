@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 /*
  * Copyright (c) 2014, STMicroelectronics International N.V.
- * Copyright (c) 2022, Linaro Limited.
  */
 
 #define PROTOTYPES
@@ -79,13 +78,11 @@
 #endif
 
 #include <compiler.h>
-#include <config.h>
 #include <malloc.h>
-#include <memtag.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdlib_ext.h>
 #include <stdlib.h>
+#include <stdlib_ext.h>
 #include <string.h>
 #include <trace.h>
 #include <util.h>
@@ -93,8 +90,19 @@
 #if defined(__KERNEL__)
 /* Compiling for TEE Core */
 #include <kernel/asan.h>
+#include <kernel/thread.h>
 #include <kernel/spinlock.h>
 #include <kernel/unwind.h>
+
+static void tag_asan_free(void *buf, size_t len)
+{
+	asan_tag_heap_free(buf, (uint8_t *)buf + len);
+}
+
+static void tag_asan_alloced(void *buf, size_t len)
+{
+	asan_tag_access(buf, (uint8_t *)buf + len);
+}
 
 static void *memset_unchecked(void *s, int c, size_t n)
 {
@@ -109,6 +117,14 @@ static __maybe_unused void *memcpy_unchecked(void *dst, const void *src,
 
 #else /*__KERNEL__*/
 /* Compiling for TA */
+
+static void tag_asan_free(void *buf __unused, size_t len __unused)
+{
+}
+
+static void tag_asan_alloced(void *buf __unused, size_t len __unused)
+{
+}
 
 static void *memset_unchecked(void *s, int c, size_t n)
 {
@@ -187,91 +203,9 @@ static void print_oom(size_t req_size __maybe_unused, void *ctx __maybe_unused)
 #endif
 }
 
-/* Most of the stuff in this function is copied from bgetr() in bget.c */
-static __maybe_unused bufsize bget_buf_size(void *buf)
-{
-	bufsize osize;          /* Old size of buffer */
-	struct bhead *b;
-
-	b = BH(((char *)buf) - sizeof(struct bhead));
-	osize = -b->bsize;
-#ifdef BECtl
-	if (osize == 0) {
-		/*  Buffer acquired directly through acqfcn. */
-		struct bdhead *bd;
-
-		bd = BDH(((char *)buf) - sizeof(struct bdhead));
-		osize = bd->tsize - sizeof(struct bdhead) - bd->offs;
-	} else
-#endif
-		osize -= sizeof(struct bhead);
-	assert(osize > 0);
-	return osize;
-}
-
-static void *maybe_tag_buf(void *buf, size_t __maybe_unused requested_size)
-{
-	if (!buf)
-		return NULL;
-
-	COMPILE_TIME_ASSERT(MEMTAG_GRANULE_SIZE <= SizeQuant);
-
-	if (MEMTAG_IS_ENABLED) {
-		size_t sz = ROUNDUP(requested_size, MEMTAG_GRANULE_SIZE);
-
-		/*
-		 * Allocated buffer can be larger than requested when
-		 * allocating with memalign(), but we should never tag more
-		 * than allocated.
-		 */
-		assert(bget_buf_size(buf) >= sz);
-		return memtag_set_random_tags(buf, sz);
-	}
-
-#if defined(__KERNEL__)
-	if (IS_ENABLED(CFG_CORE_SANITIZE_KADDRESS))
-		asan_tag_access(buf, (uint8_t *)buf + requested_size);
-#endif
-	return buf;
-}
-
-static void *maybe_untag_buf(void *buf)
-{
-	if (!buf)
-		return NULL;
-
-	if (MEMTAG_IS_ENABLED) {
-		size_t sz = 0;
-
-		memtag_assert_tag(buf); /* Trying to catch double free early */
-		sz = bget_buf_size(memtag_strip_tag(buf));
-		return memtag_set_tags(buf, sz, 0);
-	}
-
-#if defined(__KERNEL__)
-	if (IS_ENABLED(CFG_CORE_SANITIZE_KADDRESS))
-		asan_tag_heap_free(buf, (uint8_t *)buf + bget_buf_size(buf));
-#endif
-	return buf;
-}
-
-static void *strip_tag(void *buf)
-{
-	if (MEMTAG_IS_ENABLED)
-		return memtag_strip_tag(buf);
-	return buf;
-}
-
-static void tag_asan_free(void *buf __maybe_unused, size_t len __maybe_unused)
-{
-#if defined(__KERNEL__)
-	asan_tag_heap_free(buf, (uint8_t *)buf + len);
-#endif
-}
-
 #ifdef BufStats
 
-static void *raw_malloc_return_hook(void *p, size_t requested_size,
+static void raw_malloc_return_hook(void *p, size_t requested_size,
 				   struct malloc_ctx *ctx)
 {
 	if (ctx->poolset.totalloc > ctx->mstats.max_allocated)
@@ -286,8 +220,6 @@ static void *raw_malloc_return_hook(void *p, size_t requested_size,
 				ctx->poolset.totalloc;
 		}
 	}
-
-	return maybe_tag_buf(p, MAX(SizeQuant, requested_size));
 }
 
 static void gen_malloc_reset_stats(struct malloc_ctx *ctx)
@@ -323,13 +255,11 @@ void malloc_get_stats(struct malloc_stats *stats)
 
 #else /* BufStats */
 
-static void *raw_malloc_return_hook(void *p, size_t requested_size,
-				    struct malloc_ctx *ctx )
+static void raw_malloc_return_hook(void *p, size_t requested_size,
+				   struct malloc_ctx *ctx )
 {
 	if (!p)
 		print_oom(requested_size, ctx);
-
-	return maybe_tag_buf(p, MAX(SizeQuant, requested_size));
 }
 
 #endif /* BufStats */
@@ -437,7 +367,9 @@ void *raw_memalign(size_t hdr_size, size_t ftr_size, size_t alignment,
 
 	ptr = bget(alignment, hdr_size, s, &ctx->poolset);
 out:
-	return raw_malloc_return_hook(ptr, pl_size, ctx);
+	raw_malloc_return_hook(ptr, pl_size, ctx);
+
+	return ptr;
 }
 
 void *raw_malloc(size_t hdr_size, size_t ftr_size, size_t pl_size,
@@ -455,7 +387,7 @@ void raw_free(void *ptr, struct malloc_ctx *ctx, bool wipe)
 	raw_malloc_validate_pools(ctx);
 
 	if (ptr)
-		brel(maybe_untag_buf(ptr), &ctx->poolset, wipe);
+		brel(ptr, &ctx->poolset, wipe);
 }
 
 void *raw_calloc(size_t hdr_size, size_t ftr_size, size_t pl_nmemb,
@@ -478,7 +410,9 @@ void *raw_calloc(size_t hdr_size, size_t ftr_size, size_t pl_nmemb,
 
 	ptr = bgetz(0, hdr_size, s, &ctx->poolset);
 out:
-	return raw_malloc_return_hook(ptr, pl_nmemb * pl_size, ctx);
+	raw_malloc_return_hook(ptr, pl_nmemb * pl_size, ctx);
+
+	return ptr;
 }
 
 void *raw_realloc(void *ptr, size_t hdr_size, size_t ftr_size,
@@ -499,26 +433,33 @@ void *raw_realloc(void *ptr, size_t hdr_size, size_t ftr_size,
 	if (!s)
 		s++;
 
-	p = bget(0, 0, s, &ctx->poolset);
-
-	if (p && ptr) {
-		void *old_ptr = maybe_untag_buf(ptr);
-		bufsize old_sz = bget_buf_size(old_ptr);
-
-		if (old_sz < s) {
-			memcpy(p, old_ptr, old_sz);
-#ifndef __KERNEL__
-			/* User space reallocations are always zeroed */
-			memset((uint8_t *)p + old_sz, 0, s - old_sz);
-#endif
-		} else {
-			memcpy(p, old_ptr, s);
-		}
-
-		brel(old_ptr, &ctx->poolset, false /*!wipe*/);
-	}
+	p = bgetr(ptr, 0, 0, s, &ctx->poolset);
 out:
-	return raw_malloc_return_hook(p, pl_size, ctx);
+	raw_malloc_return_hook(p, pl_size, ctx);
+
+	return p;
+}
+
+/* Most of the stuff in this function is copied from bgetr() in bget.c */
+static __maybe_unused bufsize bget_buf_size(void *buf)
+{
+	bufsize osize;          /* Old size of buffer */
+	struct bhead *b;
+
+	b = BH(((char *)buf) - sizeof(struct bhead));
+	osize = -b->bsize;
+#ifdef BECtl
+	if (osize == 0) {
+		/*  Buffer acquired directly through acqfcn. */
+		struct bdhead *bd;
+
+		bd = BDH(((char *)buf) - sizeof(struct bdhead));
+		osize = bd->tsize - sizeof(struct bdhead) - bd->offs;
+	} else
+#endif
+		osize -= sizeof(struct bhead);
+	assert(osize > 0);
+	return osize;
 }
 
 #ifdef ENABLE_MDBG
@@ -887,7 +828,7 @@ static bool gen_malloc_buffer_is_within_alloced(struct malloc_ctx *ctx,
 {
 	struct bpool_iterator itr;
 	void *b;
-	uint8_t *start_buf = strip_tag(buf);
+	uint8_t *start_buf = buf;
 	uint8_t *end_buf = start_buf + len;
 	bool ret = false;
 	uint32_t exceptions = malloc_lock(ctx);

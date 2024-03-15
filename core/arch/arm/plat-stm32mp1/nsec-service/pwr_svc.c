@@ -4,9 +4,7 @@
  */
 
 #include <inttypes.h>
-#include <drivers/stm32_shared_io.h>
 #include <drivers/stm32mp1_pwr.h>
-#include <drivers/stm32_shared_io.h>
 #include <kernel/panic.h>
 #include <io.h>
 #include <mm/core_memprot.h>
@@ -54,9 +52,9 @@ uint32_t pwr_scv_handler(uint32_t x1, uint32_t x2, uint32_t x3)
 	}
 
 	DMSG("PWR service: %s 0x%" PRIx32 " at offset 0x%" PRIx32,
-	     req == STM32_SIP_SVC_REG_WRITE ? "write" :
-	     req == STM32_SIP_SVC_REG_SET ? "set" : "clear",
-	     value, offset);
+		req == STM32_SIP_SVC_REG_WRITE ? "write" :
+		req == STM32_SIP_SVC_REG_SET ? "set" : "clear",
+		value, offset);
 
 	for (i = 0; i < ARRAY_SIZE(allowed_regs); i++) {
 		if (offset != allowed_regs[i].offset)
@@ -70,17 +68,17 @@ uint32_t pwr_scv_handler(uint32_t x1, uint32_t x2, uint32_t x3)
 		case STM32_SIP_SVC_REG_WRITE:
 			io_mask32_stm32shregs(va, value, allowed);
 			FMSG("wrt off %" PRIx32 "=%" PRIx32 " => %" PRIx32,
-			     offset, value, io_read32(va));
+				offset, value, io_read32(va));
 			return STM32_SIP_SVC_OK;
 		case STM32_SIP_SVC_REG_SET:
 			io_setbits32_stm32shregs(va, value);
 			FMSG("set off %" PRIx32 "=%" PRIx32 " => %" PRIx32,
-			     offset, value, io_read32(va));
+				offset, value, io_read32(va));
 			return STM32_SIP_SVC_OK;
 		case STM32_SIP_SVC_REG_CLEAR:
 			io_clrbits32_stm32shregs(va, value);
 			FMSG("clr off %" PRIx32 "=%" PRIx32 " => %" PRIx32,
-			     offset, value, io_read32(va));
+				offset, value, io_read32(va));
 			return STM32_SIP_SVC_OK;
 		default:
 			return STM32_SIP_SVC_INVALID_PARAMS;

@@ -3,8 +3,6 @@
  * Copyright (c) 2015-2016, Linaro Limited
  */
 
-#include <arm32.h>
-#include <arm32_macros.S>
 #include <asm.S>
 
 	.fpu	neon
@@ -12,9 +10,6 @@
 /* void vfp_save_extension_regs(uint64_t regs[VFP_NUM_REGS]); */
 FUNC vfp_save_extension_regs , :
 	vstm	r0!, {d0-d15}
-	read_cpacr r1
-	tst	r1, #CPACR_D32DIS
-	bxne	lr
 	vstm	r0, {d16-d31}
 	bx	lr
 END_FUNC vfp_save_extension_regs
@@ -22,9 +17,6 @@ END_FUNC vfp_save_extension_regs
 /* void vfp_restore_extension_regs(uint64_t regs[VFP_NUM_REGS]); */
 FUNC vfp_restore_extension_regs , :
 	vldm	r0!, {d0-d15}
-	read_cpacr r1
-	tst	r1, #CPACR_D32DIS
-	bxne	lr
 	vldm	r0, {d16-d31}
 	bx	lr
 END_FUNC vfp_restore_extension_regs

@@ -44,7 +44,6 @@ patternProperties:
           related area can only be reached by the secure world.
           It requires to be 32 bits word aligned to allow non-secure sharing.
         type: boolean
-
       st,non-secure-otp-provisioning:
         description: |
           This property explicits a factory programmed area that allows a non-secure

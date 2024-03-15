@@ -45,7 +45,7 @@ struct vrefbuf_regul {
 	uint64_t disable_timeout;
 };
 
-static const uint16_t stm32_vrefbuf_voltages[] = {
+static uint16_t stm32_vrefbuf_voltages[] = {
 	/* Matches resp. VRS = 011b, 010b, 001b, 000b */
 	1650, 1800, 2048, 2500,
 };
@@ -64,10 +64,7 @@ static TEE_Result vrefbuf_wait_ready(struct vrefbuf_regul *vr)
 
 	while (!timeout_elapsed(to))
 		if ((io_read32(reg) & STM32_VRR))
-			break;
-
-	if ((io_read32(reg) & STM32_VRR))
-		return TEE_SUCCESS;
+			return TEE_SUCCESS;
 
 	return TEE_ERROR_GENERIC;
 }
@@ -109,7 +106,7 @@ static TEE_Result vrefbuf_set_state(const struct regul_desc *desc, bool enable)
 	return TEE_SUCCESS;
 }
 
-static TEE_Result vrefbuf_get_state(const struct regul_desc *desc,
+static TEE_Result vrefbuf_get_state(const struct regul_desc *desc __unused,
 				    bool *enabled)
 {
 	struct vrefbuf_regul *vr = (struct vrefbuf_regul *)desc->driver_data;
@@ -124,7 +121,7 @@ static TEE_Result vrefbuf_get_state(const struct regul_desc *desc,
 	return TEE_SUCCESS;
 }
 
-static TEE_Result vrefbuf_get_voltage(const struct regul_desc *desc,
+static TEE_Result vrefbuf_get_voltage(const struct regul_desc *desc __unused,
 				      uint16_t *mv)
 {
 	struct vrefbuf_regul *vr = (struct vrefbuf_regul *)desc->driver_data;
@@ -143,14 +140,14 @@ static TEE_Result vrefbuf_get_voltage(const struct regul_desc *desc,
 	return TEE_SUCCESS;
 }
 
-static TEE_Result vrefbuf_set_voltage(const struct regul_desc *desc,
+static TEE_Result vrefbuf_set_voltage(const struct regul_desc *desc __unused,
 				      uint16_t mv)
 {
 	struct vrefbuf_regul *vr = (struct vrefbuf_regul *)desc->driver_data;
 	uintptr_t reg = stm32mp_vrefbuf_base(vr) + STM32_VREFBUF_CSR;
 	uint8_t i = 0;
 
-	for (i = 0 ; i < ARRAY_SIZE(stm32_vrefbuf_voltages) ; i++) {
+	for (i = 0 ; i < ARRAY_SIZE(stm32_vrefbuf_voltages) ; i++)
 		if (stm32_vrefbuf_voltages[i] == mv) {
 			uint32_t val = INV_VRS(i << STM32_VRS_SHIFT);
 
@@ -162,7 +159,6 @@ static TEE_Result vrefbuf_set_voltage(const struct regul_desc *desc,
 
 			return TEE_SUCCESS;
 		}
-	}
 
 	EMSG("Failed to set voltage on vrefbuf");
 
@@ -172,10 +168,8 @@ static TEE_Result vrefbuf_set_voltage(const struct regul_desc *desc,
 static TEE_Result vrefbuf_list_voltages(const struct regul_desc *desc __unused,
 					uint16_t **levels, size_t *count)
 {
-	const uint16_t **vrefbuf = (const uint16_t **)levels;
-
 	*count = ARRAY_SIZE(stm32_vrefbuf_voltages);
-	*vrefbuf = stm32_vrefbuf_voltages;
+	*levels = stm32_vrefbuf_voltages;
 
 	return TEE_SUCCESS;
 }
@@ -203,7 +197,7 @@ struct regul_ops vrefbuf_ops = {
 };
 
 static TEE_Result vrefbuf_pm(enum pm_op op, unsigned int pm_hint __unused,
-			     const struct pm_callback_handle *hdl)
+			     const struct pm_callback_handle *hdl __unused)
 {
 	struct vrefbuf_regul *vr = (struct vrefbuf_regul *)hdl->handle;
 	uintptr_t reg = stm32mp_vrefbuf_base(vr) + STM32_VREFBUF_CSR;
@@ -227,7 +221,7 @@ static TEE_Result vrefbuf_pm(enum pm_op op, unsigned int pm_hint __unused,
 
 		io_clrsetbits32(reg,  STM32_VRS, vr->pm_val);
 
-		if (vr->pm_val & STM32_ENVR) {
+		if (vr->pm_val | STM32_ENVR) {
 			vr->disable_timeout = 0;
 			vrefbuf_set_state(&vr->desc, true);
 		}
@@ -279,15 +273,14 @@ static TEE_Result stm32_vrefbuf_regulator_probe(const void *fdt, int node,
 	vr->clock = clk;
 
 	res = regulator_register(&vr->desc, node);
-	if (res) {
+	if (res != 0) {
 		EMSG("Failed to register vrefbuf");
-		free(vr);
 		return res;
 	}
 
 	register_pm_driver_cb(vrefbuf_pm, (void *)vr, "vrefbuf-driver");
 
-	return TEE_SUCCESS;
+	return 0;
 }
 
 static const struct dt_device_match vrefbuf_match_table[] = {

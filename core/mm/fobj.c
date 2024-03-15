@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 /*
- * Copyright (c) 2019-2022, Linaro Limited
+ * Copyright (c) 2019-2021, Linaro Limited
  */
 
 #include <config.h>
@@ -9,7 +9,6 @@
 #include <initcall.h>
 #include <kernel/boot.h>
 #include <kernel/panic.h>
-#include <memtag.h>
 #include <mm/core_memprot.h>
 #include <mm/core_mmu.h>
 #include <mm/fobj.h>
@@ -242,7 +241,7 @@ DECLARE_KEEP_PAGER(rwp_paged_iv_get_iv_vaddr);
  * when added to the unpaged area.
  */
 const struct fobj_ops ops_rwp_paged_iv
-__weak __relrodata_unpaged("ops_rwp_paged_iv") = {
+__weak __rodata_unpaged("ops_rwp_paged_iv") = {
 	.free = rwp_paged_iv_free,
 	.load_page = rwp_paged_iv_load_page,
 	.save_page = rwp_paged_iv_save_page,
@@ -348,7 +347,7 @@ static void rwp_unpaged_iv_free(struct fobj *fobj)
  * when added to the unpaged area.
  */
 const struct fobj_ops ops_rwp_unpaged_iv
-__weak __relrodata_unpaged("ops_rwp_unpaged_iv") = {
+__weak __rodata_unpaged("ops_rwp_unpaged_iv") = {
 	.free = rwp_unpaged_iv_free,
 	.load_page = rwp_unpaged_iv_load_page,
 	.save_page = rwp_unpaged_iv_save_page,
@@ -495,8 +494,7 @@ DECLARE_KEEP_PAGER(rop_save_page);
  * Note: this variable is weak just to ease breaking its dependency chain
  * when added to the unpaged area.
  */
-const struct fobj_ops ops_ro_paged
-__weak __relrodata_unpaged("ops_ro_paged") = {
+const struct fobj_ops ops_ro_paged __weak __rodata_unpaged("ops_ro_paged") = {
 	.free = rop_free,
 	.load_page = rop_load_page,
 	.save_page = rop_save_page,
@@ -673,7 +671,7 @@ DECLARE_KEEP_PAGER(rrp_load_page);
  * when added to the unpaged area.
  */
 const struct fobj_ops ops_ro_reloc_paged
-__weak __relrodata_unpaged("ops_ro_reloc_paged") = {
+__weak __rodata_unpaged("ops_ro_reloc_paged") = {
 	.free = rrp_free,
 	.load_page = rrp_load_page,
 	.save_page = rop_save_page, /* Direct reuse */
@@ -731,7 +729,7 @@ DECLARE_KEEP_PAGER(lop_save_page);
  * when added to the unpaged area.
  */
 const struct fobj_ops ops_locked_paged
-__weak __relrodata_unpaged("ops_locked_paged") = {
+__weak __rodata_unpaged("ops_locked_paged") = {
 	.free = lop_free,
 	.load_page = lop_load_page,
 	.save_page = lop_save_page,
@@ -767,7 +765,7 @@ struct fobj *fobj_sec_mem_alloc(unsigned int num_pages)
 	if (!va)
 		goto err;
 
-	memtag_clear_mem(va, size);
+	memset(va, 0, size);
 	f->fobj.ops = &ops_sec_mem;
 	f->fobj.num_pages = num_pages;
 	refcount_set(&f->fobj.refc, 1);
@@ -810,7 +808,7 @@ static paddr_t sec_mem_get_pa(struct fobj *fobj, unsigned int page_idx)
  * Note: this variable is weak just to ease breaking its dependency chain
  * when added to the unpaged area.
  */
-const struct fobj_ops ops_sec_mem __weak __relrodata_unpaged("ops_sec_mem") = {
+const struct fobj_ops ops_sec_mem __weak __rodata_unpaged("ops_sec_mem") = {
 	.free = sec_mem_free,
 	.get_pa = sec_mem_get_pa,
 };

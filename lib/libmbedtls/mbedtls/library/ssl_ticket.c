@@ -37,7 +37,7 @@
 #include <string.h>
 
 /*
- * Initialize context
+ * Initialze context
  */
 void mbedtls_ssl_ticket_init( mbedtls_ssl_ticket_context *ctx )
 {
@@ -66,7 +66,6 @@ void mbedtls_ssl_ticket_init( mbedtls_ssl_ticket_context *ctx )
 /*
  * Generate/update a key
  */
-MBEDTLS_CHECK_RETURN_CRITICAL
 static int ssl_ticket_gen_key( mbedtls_ssl_ticket_context *ctx,
                                unsigned char index )
 {
@@ -97,7 +96,6 @@ static int ssl_ticket_gen_key( mbedtls_ssl_ticket_context *ctx,
 /*
  * Rotate/generate keys if necessary
  */
-MBEDTLS_CHECK_RETURN_CRITICAL
 static int ssl_ticket_update_keys( mbedtls_ssl_ticket_context *ctx )
 {
 #if !defined(MBEDTLS_HAVE_TIME)
@@ -247,7 +245,8 @@ int mbedtls_ssl_ticket_write( void *p_ticket,
     {
          goto cleanup;
     }
-    MBEDTLS_PUT_UINT16_BE( clear_len, state_len_bytes, 0 );
+    state_len_bytes[0] = ( clear_len >> 8 ) & 0xff;
+    state_len_bytes[1] = ( clear_len      ) & 0xff;
 
     /* Encrypt and authenticate */
     if( ( ret = mbedtls_cipher_auth_encrypt_ext( &key->ctx,

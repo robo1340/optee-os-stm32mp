@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: BSD-2-Clause
 /*
- * Copyright (c) 2021, STMicroelectronics - All Rights Reserved
+ * Copyright (c) 2021-2022, STMicroelectronics - All Rights Reserved
  */
 #include <assert.h>
 #include <config.h>
-#include <drivers/clk.h>
-#include <drivers/clk_dt.h>
-#include <drivers/rstctrl.h>
 #include <initcall.h>
 #include <io.h>
 #include <kernel/boot.h>
@@ -341,12 +338,8 @@ static TEE_Result __must_check read_block(struct stm32_cryp_context *ctx,
 static void cryp_end(struct stm32_cryp_context *ctx, TEE_Result prev_error)
 {
 	if (prev_error) {
-		if (cryp_pdata.reset &&
-		    rstctrl_assert_to(cryp_pdata.reset, TIMEOUT_US_1MS))
-			panic();
-		if (cryp_pdata.reset &&
-		    rstctrl_deassert_to(cryp_pdata.reset, TIMEOUT_US_1MS))
-			panic();
+		stm32_reset_assert(cryp_pdata.reset_id, TIMEOUT_US_1MS);
+		stm32_reset_deassert(cryp_pdata.reset_id, TIMEOUT_US_1MS);
 	}
 
 	/* Disable the CRYP peripheral */
@@ -1247,45 +1240,49 @@ out:
 	return res;
 }
 
-static TEE_Result stm32_cryp_probe(const void *fdt, int node,
-				   const void *compt_data __unused)
+static TEE_Result fdt_stm32_cryp(struct stm32_cryp_platdata *pdata,
+				 const void *fdt, int node)
+
 {
-	TEE_Result res = TEE_SUCCESS;
+	TEE_Result res = TEE_ERROR_GENERIC;
 	struct dt_node_info dt_cryp = { };
-	struct rstctrl *rstctrl = NULL;
-	struct clk *clk = NULL;
 
 	_fdt_fill_device_info(fdt, &dt_cryp, node);
 
 	if (dt_cryp.reg == DT_INFO_INVALID_REG ||
-	    dt_cryp.reg_size == DT_INFO_INVALID_REG_SIZE)
+	    dt_cryp.reg_size == DT_INFO_INVALID_REG_SIZE ||
+	    dt_cryp.reset == DT_INFO_INVALID_RESET)
+		return TEE_ERROR_BAD_PARAMETERS;
+
+	pdata->base.pa = dt_cryp.reg;
+	io_pa_or_va_secure(&pdata->base, dt_cryp.reg_size);
+	if (!pdata->base.va)
 		panic();
 
-	res = clk_dt_get_by_index(fdt, node, 0, &clk);
+	pdata->reset_id = (unsigned int)dt_cryp.reset;
+
+	res= clk_dt_get_by_index(fdt, node, 0, &pdata->clock);
+	if (!pdata->clock)
+		return res;
+
+	return TEE_SUCCESS;
+}
+
+static TEE_Result stm32_cryp_probe(const void *fdt, int node,
+				   const void *compt_data __unused)
+{
+	TEE_Result res = TEE_SUCCESS;
+
+	res = fdt_stm32_cryp(&cryp_pdata, fdt, node);
 	if (res)
 		return res;
 
-	res = rstctrl_dt_get_by_index(fdt, node, 0, &rstctrl);
-	if(res != TEE_SUCCESS && res != TEE_ERROR_ITEM_NOT_FOUND)
-		return res;
+	clk_enable(cryp_pdata.clock);
 
-	cryp_pdata.clock = clk;
-	cryp_pdata.reset = rstctrl;
-	cryp_pdata.base.pa = dt_cryp.reg;
-
-	io_pa_or_va_secure(&cryp_pdata.base, dt_cryp.reg_size);
-	if (!cryp_pdata.base.va)
+	if (stm32_reset_assert(cryp_pdata.reset_id, TIMEOUT_US_1MS))
 		panic();
 
-	stm32mp_register_secure_periph_iomem(cryp_pdata.base.pa);
-
-	if (clk_enable(cryp_pdata.clock))
-		panic();
-
-	if (rstctrl && rstctrl_assert_to(cryp_pdata.reset, TIMEOUT_US_1MS))
-		panic();
-
-	if (rstctrl && rstctrl_deassert_to(cryp_pdata.reset, TIMEOUT_US_1MS))
+	if (stm32_reset_deassert(cryp_pdata.reset_id, TIMEOUT_US_1MS))
 		panic();
 
 	if (IS_ENABLED(CFG_CRYPTO_DRV_AUTHENC)) {
@@ -1304,11 +1301,13 @@ static TEE_Result stm32_cryp_probe(const void *fdt, int node,
 		}
 	}
 
+	stm32mp_register_secure_periph_iomem(cryp_pdata.base.pa);
+
 	return TEE_SUCCESS;
 }
 
 static const struct dt_device_match stm32_cryp_match_table[] = {
-	{ .compatible = "st,stm32mp1-cryp" },
+	{ .compatible = "st,stm32mp1-cryp"},
 	{ }
 };
 

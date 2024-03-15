@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 /*
- * Copyright (c) 2021-2022, STMicroelectronics
+ * Copyright (c) 2021, STMicroelectronics
  */
 
 #include <assert.h>
@@ -165,8 +165,8 @@
 #define _TAMP_ERCFGR_ERCFG_MASK		BIT(0)
 
 /* _TAMP_HWCFGR2 bit fields */
-#define _TAMP_HWCFGR2_OR		GENMASK_32(7, 0)
 #define _TAMP_HWCFGR2_TZ		GENMASK_32(11, 8)
+#define _TAMP_HWCFGR2_OR		GENMASK_32(7, 0)
 
 /* _TAMP_HWCFGR1 bit fields */
 #define _TAMP_HWCFGR1_BKPREG		GENMASK_32(7, 0)
@@ -187,7 +187,7 @@
 #define TAMP_ACTIVE			BIT(17)
 #define TAMP_IN_DT			BIT(18)
 
-#define TAMP_EXTI_WKUP			18U
+#define TAMP_EXTI_WKUP			18
 
 enum stm32_tamp_out_id {
 	OUT_TAMP1 = LAST_TAMP,
@@ -274,7 +274,9 @@ static const struct stm32_tamp_pin_map pin_map_mp15[] = {
 	},
 };
 
-/* Expects at most a single instance */
+/*
+ * Only 1 instance of TAMP is expected per platform
+ */
 static struct stm32_tamp_instance stm32_tamp;
 
 static enum itr_return stm32_tamp_it_handler(struct itr_handler *h);
@@ -299,13 +301,12 @@ static void stm32_tamp_set_secure(struct stm32_tamp_instance *tamp,
 	vaddr_t base = io_pa_or_va(&tamp->pdata.base, 1);
 
 	if (tamp->pdata.compat &&
-	    (tamp->pdata.compat->tags & TAMP_HAS_REGISTER_SECCFGR)) {
+	    (tamp->pdata.compat->tags & TAMP_HAS_REGISTER_SECCFG)) {
 		io_clrsetbits32(base + _TAMP_SECCFGR,
 				_TAMP_SECCFGR_BUT_BKP_MASK,
 				mode & _TAMP_SECCFGR_BUT_BKP_MASK);
 	} else {
-		/*
-		 * Note: MP15 doesn't use SECCFG register
+		/* Note: MP15 doesn't use SECCFG register
 		 * and inverts the secure bit
 		 */
 		if (mode & _TAMP_SECCFGR_TAMPSEC)
@@ -334,7 +335,7 @@ static void stm32_tamp_set_pins(vaddr_t base, uint32_t mode)
 static TEE_Result stm32_tamp_set_seed(vaddr_t base)
 {
 	/* Need RNG access. */
-	uint64_t timeout_ref = 0;
+	uint64_t timeout_ref = timeout_init_us(SEED_TIMEOUT_US);
 	int idx = 0;
 
 	for (idx = 0; idx < 4; idx++) {
@@ -346,7 +347,6 @@ static TEE_Result stm32_tamp_set_seed(vaddr_t base)
 		io_write32(base + _TAMP_ATSEEDR, rnd);
 	}
 
-	timeout_ref = timeout_init_us(SEED_TIMEOUT_US);
 	while (io_read32(base + _TAMP_ATOR) & _TAMP_SEEDF)
 		if (timeout_elapsed(timeout_ref))
 			break;
@@ -359,7 +359,7 @@ static TEE_Result stm32_tamp_set_seed(vaddr_t base)
 
 static bool is_int_tamp_id_valid(enum stm32_tamp_id id)
 {
-	return (id - INT_TAMP1 < _TAMP_HWCFGR1_ITAMP_MAX_ID) &&
+	return (id - INT_TAMP1 <= _TAMP_HWCFGR1_ITAMP_MAX_ID) &&
 	       (stm32_tamp.hwconf1 & _TAMP_HWCFGR1_ITAMP(id));
 }
 
@@ -537,10 +537,10 @@ TEE_Result stm32_tamp_set_secure_bkpregs(struct stm32_bkpregs_conf *bkr_conf)
 
 	if ((first_z2 > (stm32_tamp.hwconf1 & _TAMP_HWCFGR1_BKPREG)) ||
 	    (first_z3 > (stm32_tamp.hwconf1 & _TAMP_HWCFGR1_BKPREG)))
-		return TEE_ERROR_BAD_PARAMETERS;
+		return TEE_ERROR_NOT_SUPPORTED;
 
 	if (stm32_tamp.pdata.compat &&
-	    (stm32_tamp.pdata.compat->tags & TAMP_HAS_REGISTER_SECCFGR)) {
+	    (stm32_tamp.pdata.compat->tags & TAMP_HAS_REGISTER_SECCFG)) {
 		io_clrsetbits32(base + _TAMP_SECCFGR,
 				_TAMP_SECCFGR_BKPRWSEC_MASK,
 				(first_z2 << _TAMP_SECCFGR_BKPRWSEC_SHIFT) &
@@ -568,7 +568,7 @@ TEE_Result stm32_tamp_set_secure_bkpregs(struct stm32_bkpregs_conf *bkr_conf)
 /*
  * Count number of 1 in bitmask
  * Cannot use __builtin_popcount(): libgcc.a for ARMV7 use hardfloat ABI,
- * but optee is compiled with softfloat ABI.
+ * but optee is compiled with softfloaf ABI.
  */
 static int popcount(uint32_t bitmask)
 {
@@ -684,7 +684,7 @@ TEE_Result stm32_tamp_set_config(void)
 
 	/*
 	 * We installed callback,
-	 * we force managing TAMPER events that could have occurred while boot.
+	 * we force managing TAMPER events that could have occured while boot.
 	 */
 	stm32_tamp_it_handler(stm32_tamp.itr);
 
@@ -704,7 +704,7 @@ TEE_Result stm32_tamp_set_mask(enum stm32_tamp_id id)
 	vaddr_t base = io_pa_or_va(&stm32_tamp.pdata.base, 1);
 
 	/* Only EXT_TAMP1, EXT_TAMP2, EXT_TAMP3 can be masked. */
-	if (id < EXT_TAMP1 || id > (EXT_TAMP1 + _TAMP_CR2_ETAMPMSK_MAX_ID))
+	if (id < EXT_TAMP1 && id > (EXT_TAMP1 + _TAMP_CR2_ETAMPMSK_MAX_ID))
 		return TEE_ERROR_BAD_PARAMETERS;
 
 	/* We cannot mask the event if pending. */
@@ -730,7 +730,7 @@ TEE_Result stm32_tamp_unset_mask(enum stm32_tamp_id id)
 	vaddr_t base = io_pa_or_va(&stm32_tamp.pdata.base, 1);
 
 	/* Only EXT_TAMP1, EXT_TAMP2, EXT_TAMP3 can be masked. */
-	if (id < EXT_TAMP1 || id > (EXT_TAMP1 + _TAMP_CR2_ETAMPMSK_MAX_ID))
+	if (id < EXT_TAMP1 && id > (EXT_TAMP1 + _TAMP_CR2_ETAMPMSK_MAX_ID))
 		return TEE_ERROR_BAD_PARAMETERS;
 
 	/* We unmask the event */
@@ -785,7 +785,7 @@ static TEE_Result stm32_tamp_configure_ext(struct stm32_tamp_conf *tamp_ext,
 	enum stm32_tamp_id id = tamp_ext->id;
 
 	if (mode & TAMP_EVT_MASK &&
-	    (id < EXT_TAMP1 || id > (EXT_TAMP1 + _TAMP_CR2_ETAMPMSK_MAX_ID)))
+	    (id < EXT_TAMP1 && id > (EXT_TAMP1 + _TAMP_CR2_ETAMPMSK_MAX_ID)))
 		return TEE_ERROR_BAD_PARAMETERS;
 
 	if (!(tamp_ext->mode & TAMP_IN_DT))
@@ -809,7 +809,7 @@ TEE_Result stm32_tamp_activate_tamp(enum stm32_tamp_id id, uint32_t mode,
 	if (!cb)
 		return TEE_ERROR_BAD_PARAMETERS;
 
-	/* Find internal Tamp struct */
+	/* Find internal Tamp struct*/
 	for (i = 0U; i < stm32_tamp.pdata.compat->int_tamp_size; i++)
 		if (stm32_tamp.pdata.compat->int_tamp[i].id == id) {
 			tamp_conf = &stm32_tamp.pdata.compat->int_tamp[i];
@@ -872,7 +872,7 @@ void stm32_tamp_lock_boot_hardware_key(void)
 	vaddr_t base = io_pa_or_va(&stm32_tamp.pdata.base, 1);
 
 	if (stm32_tamp.pdata.compat &&
-	    (stm32_tamp.pdata.compat->tags & TAMP_HAS_REGISTER_SECCFGR))
+	    (stm32_tamp.pdata.compat->tags & TAMP_HAS_REGISTER_SECCFG))
 		io_setbits32(base + _TAMP_SECCFGR, _TAMP_SECCFGR_BHKLOCK);
 }
 
@@ -885,12 +885,8 @@ static enum itr_return stm32_tamp_it_handler(struct itr_handler *h)
 	uint32_t ext_it = it & _TAMP_SR_ETAMPXF_MASK;
 	size_t i = 0;
 	struct stm32_rtc_time tamp_ts = { };
-	bool ts_enabled = false;
 
-	if (stm32_rtc_is_timestamp_enable(&ts_enabled))
-		panic();
-
-	if (ts_enabled && it) {
+	if (stm32_rtc_is_timestamp_enable() && it) {
 		stm32_rtc_get_timestamp(&tamp_ts);
 		FMSG("Tamper Event Occurred");
 		FMSG("Date: %u/%u\n \t Time: %u:%u:%u",
@@ -1035,12 +1031,11 @@ TEE_Result stm32_tamp_configure_pin_from_dt(const void *fdt, int node,
 	id = fdt32_to_cpu(*tampid) + EXT_TAMP1 - 1;
 
 	/* Find external Tamp struct */
-	for (i = 0U; i < pdata->compat->ext_tamp_size; i++) {
+	for (i = 0U; i < pdata->compat->ext_tamp_size; i++)
 		if (pdata->compat->ext_tamp[i].id == id) {
 			tamp_ext = &pdata->compat->ext_tamp[i];
 			break;
 		}
-	}
 
 	if (!tamp_ext)
 		return TEE_ERROR_BAD_PARAMETERS;
@@ -1194,7 +1189,7 @@ static int stm32_tamp_parse_active_conf(const void *fdt, int node,
 		conf |= _TAMP_ATCR1_FLTEN;
 
 	/*
-	 * Here we will select a divisor for the RTCCLK.
+	 * Here we will select a diviser for the RTCCLK.
 	 * Note that RTCCLK is also divided by (RTC_PRER_PREDIV_A - 1).
 	 */
 	cuint = fdt_getprop(fdt, node, "st,tamp_active_clk_div", NULL);
@@ -1326,7 +1321,6 @@ TEE_Result stm32_tamp_get_platdata(struct stm32_tamp_platdata *pdata __unused)
 static TEE_Result stm32_tamp_probe(const void *fdt, int node,
 				   const void *compat_data)
 {
-	uint32_t __maybe_unused revision = 0;
 	TEE_Result res = TEE_SUCCESS;
 	vaddr_t base = 0;
 
@@ -1346,13 +1340,16 @@ static TEE_Result stm32_tamp_probe(const void *fdt, int node,
 	stm32_tamp.hwconf1 = io_read32(base + _TAMP_HWCFGR1);
 	stm32_tamp.hwconf2 = io_read32(base + _TAMP_HWCFGR2);
 
-	revision = io_read32(base + _TAMP_VERR);
-	FMSG("STM32 TAMPER V%"PRIx32".%"PRIu32,
-	     (revision & _TAMP_VERR_MAJREV) >> 4, revision & _TAMP_VERR_MINREV);
+	if (TRACE_LEVEL >= TRACE_FLOW) {
+		uint32_t __maybe_unused rev = io_read32(base + _TAMP_VERR);
+
+		FMSG("STM32 TAMPER V%u.%u", (rev & _TAMP_VERR_MAJREV) >> 4,
+		     rev & _TAMP_VERR_MINREV);
+	}
 
 	if (!(stm32_tamp.hwconf2 & _TAMP_HWCFGR2_TZ)) {
-		EMSG("TAMP doesn't support TrustZone");
-		res = TEE_ERROR_NOT_SUPPORTED;
+		EMSG("Tamper IP doesn't support trustzone");
+		return TEE_ERROR_NOT_SUPPORTED;
 	}
 
 	stm32_tamp_set_pins(base, stm32_tamp.pdata.pins_conf);
@@ -1370,16 +1367,16 @@ static TEE_Result stm32_tamp_probe(const void *fdt, int node,
 	 *
 	 * IP is always SECURE, on mp13 both counter can be access from
 	 * secure and unsecure world.
-	 */
+	 * */
 	stm32_tamp_set_secure(&stm32_tamp, _TAMP_SECCFGR_TAMPSEC);
 
 	/*
 	 * Select access in privileged mode or unprivileged mode
 	 *
 	 * TAMP ip need secure access,
-	 * backup register zone 1 can be read/written only from secure
-	 * backup register zone 2 can be written only from secure.
-	 * monotonic counters can be read/written from secure and unsecure.
+	 * backup register zone 1 can be read/writen only from secure
+	 * backup register zone 2 can be writen only from secure.
+	 * monotic counters can be read/writen from secure and unsecure.
 	 */
 	stm32_tamp_set_privilege(&stm32_tamp, _TAMP_PRIVCFG_TAMPPRIV |
 				 _TAMP_PRIVCFG_BKPRWPRIV |
@@ -1388,9 +1385,9 @@ static TEE_Result stm32_tamp_probe(const void *fdt, int node,
 	stm32_tamp.itr = itr_alloc_add(stm32_tamp.pdata.it,
 				       stm32_tamp_it_handler,
 				       ITRF_TRIGGER_LEVEL, &stm32_tamp);
-	if (!stm32_tamp.itr)
+	if (!stm32_tamp.itr) {
 		return TEE_ERROR_BAD_PARAMETERS;
-
+	}
 	if (stm32_tamp.pdata.is_wakeup_source) {
 		if (IS_ENABLED(CFG_STM32_EXTI))
 			stm32_exti_enable_wake(TAMP_EXTI_WKUP);
@@ -1405,7 +1402,7 @@ static TEE_Result stm32_tamp_probe(const void *fdt, int node,
 
 static const struct stm32_tamp_compat mp13_compat = {
 		.nb_monotonic_counter = 2,
-		.tags = TAMP_HAS_REGISTER_SECCFGR |
+		.tags = TAMP_HAS_REGISTER_SECCFG |
 			TAMP_HAS_REGISTER_PRIVCFGR |
 			TAMP_HAS_REGISTER_ERCFGR |
 			TAMP_HAS_REGISTER_CR3 |

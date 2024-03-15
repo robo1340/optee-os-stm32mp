@@ -10,6 +10,6 @@
 #include <dt-bindings/gpio/gpio.h>
 
 /* Macro to define the security for GPIO */
-#define TZPROT(id) (1 << (id))
+#define TZPROT(id) (1 << id)
 
 #endif

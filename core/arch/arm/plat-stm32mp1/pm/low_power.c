@@ -12,6 +12,7 @@
 #include <drivers/gic.h>
 #include <drivers/regulator.h>
 #include <drivers/stm32_etzpc.h>
+#include <drivers/stm32_iwdg.h>
 #include <drivers/stm32mp_dt_bindings.h>
 #include <drivers/stm32mp1_ddrc.h>
 #include <drivers/stm32mp1_pmic.h>
@@ -22,7 +23,6 @@
 #include <drivers/stm32mp1_rcc.h>
 #endif
 #include <drivers/stpmic1.h>
-#include <drivers/wdt.h>
 #include <initcall.h>
 #include <io.h>
 #include <keep.h>
@@ -53,8 +53,6 @@ struct pwr_lp_config {
 	uint32_t pwr_mpucr;
 	const char *regul_suspend_node_name;
 };
-
-#define TIMEOUT_US_10MS		(10 * 1000)
 
 #ifdef CFG_STM32MP13
 #define PWR_CR1_MASK	(PWR_CR1_LPDS | PWR_CR1_LPCFG | PWR_CR1_LVDS |\
@@ -201,6 +199,20 @@ void stm32_pm_cpu_wfi(void)
 	cpu_wfi();
 }
 
+/* If IWDG is not supported, provide a stubbed weak watchdog kicker */
+void __weak stm32_iwdg_refresh(void)
+{
+}
+
+#define ARM_CNTXCTL_IMASK	BIT(1)
+
+static void stm32mp_mask_timer(void)
+{
+	/* Mask timer interrupts */
+	write_cntp_ctl(read_cntp_ctl() | ARM_CNTXCTL_IMASK);
+	write_cntv_ctl(read_cntv_ctl() | ARM_CNTXCTL_IMASK);
+}
+
 /*
  * stm32_enter_cstop - Prepare CSTOP mode
  *
@@ -212,14 +224,10 @@ void stm32_enter_cstop(uint32_t mode)
 	vaddr_t pwr_base = stm32_pwr_base();
 	vaddr_t rcc_base = stm32_rcc_base();
 
-	IMSG("Enter cstop mode %u", mode);
-
 #ifdef CFG_STM32MP15
 	if (mode == STM32_PM_CSTOP_ALLOW_LPLV_STOP2)
 		panic("LPLV-Stop2 mode not supported");
-#endif
 
-#ifdef CFG_STM32MP1_OPTEE_IN_SYSRAM
 	/* Save Self-Refresh (SR) mode and switch to Software SR mode */
 	ddr_save_sr_mode(DDR_SSR_MODE);
 #endif
@@ -269,19 +277,17 @@ void stm32_enter_cstop(uint32_t mode)
 	io_setbits32(rcc_base + RCC_MP_SREQSETR,
 		     RCC_MP_SREQSETR_STPREQ_P0 | RCC_MP_SREQSETR_STPREQ_P1);
 
-	watchdog_ping();
+	stm32_iwdg_refresh();
 #endif
 
 	set_rcc_it_priority(&gicd_rcc_wakeup, &gicc_pmr);
 
-#ifdef CFG_STM32MP1_OPTEE_IN_SYSRAM
+#ifndef CFG_STM32MP13
 	if (ddr_standby_sr_entry() != 0)
 		panic();
 #endif
 
 	if (mode == STM32_PM_CSTOP_ALLOW_STANDBY_DDR_SR) {
-		uint64_t to = 0;
-
 		/* set POPL to 20ms */
 		io_clrsetbits32(pwr_base + PWR_CR3_OFF, PWR_CR3_POPL_MASK,
 				20U << PWR_CR3_POPL_SHIFT);
@@ -289,20 +295,18 @@ void stm32_enter_cstop(uint32_t mode)
 		/* Keep backup RAM content in standby */
 		io_setbits32(pwr_base + PWR_CR2_OFF, PWR_CR2_BREN);
 
-		to = timeout_init_us(TIMEOUT_US_10MS);
+		// TODO add a timeout?
 		while (!(io_read32(pwr_base + PWR_CR2_OFF) & PWR_CR2_BRRDY))
-			if (timeout_elapsed(to))
-				panic();
+			;
 
-#ifdef CFG_STM32MP15
+#ifndef CFG_STM32MP13
 		if (stm32mp1_is_retram_during_standby()) {
 			/* Keep retention in standby */
-			to = timeout_init_us(TIMEOUT_US_10MS);
 			io_setbits32(pwr_base + PWR_CR2_OFF, PWR_CR2_RREN);
 
-			while (!(io_read32(pwr_base + PWR_CR2_OFF) & PWR_CR2_RRRDY))
-				if (timeout_elapsed(to))
-					panic();
+			while ((io_read32(pwr_base + PWR_CR2_OFF) &
+				(PWR_CR2_RRRDY)) == 0U)
+				;
 		}
 #endif
 	}
@@ -315,7 +319,7 @@ void stm32_exit_cstop(void)
 {
 	vaddr_t rcc_base = stm32_rcc_base();
 
-#ifdef CFG_STM32MP1_OPTEE_IN_SYSRAM
+#ifdef CFG_STM32MP15
 	if (ddr_standby_sr_exit())
 		panic();
 
@@ -455,6 +459,46 @@ static struct itr_handler rcc_wakeup_handler = {
 };
 DECLARE_KEEP_PAGER(rcc_wakeup_handler);
 
+/* SGI9 (secure SGI 1) informs targeted CPU it shall reset */
+static enum itr_return sgi9_it_handler(struct itr_handler *hdl  __unused)
+{
+	DMSG("Halting CPU %u", get_core_pos());
+
+	stm32mp_mask_timer();
+
+	stm32mp_dump_core_registers(false);
+
+	while (true)
+		cpu_idle();
+
+	return ITRR_HANDLED;
+}
+
+static struct itr_handler sgi9_reset_handler = {
+	.it = GIC_SEC_SGI_1,
+	.handler = sgi9_it_handler,
+};
+DECLARE_KEEP_PAGER(sgi9_reset_handler);
+
+void __noreturn plat_panic(void)
+{
+	stm32mp_mask_timer();
+
+	if (stm32mp_supports_second_core()) {
+		uint32_t target_mask = 0;
+
+		if (get_core_pos() == 0)
+			target_mask = TARGET_CPU1_GIC_MASK;
+		else
+			target_mask = TARGET_CPU0_GIC_MASK;
+
+		itr_raise_sgi(GIC_SEC_SGI_1, target_mask);
+	}
+
+	while (true)
+		cpu_idle();
+}
+
 static TEE_Result init_low_power(void)
 {
 	vaddr_t pwr_base __maybe_unused = stm32_pwr_base();
@@ -462,6 +506,9 @@ static TEE_Result init_low_power(void)
 
 	itr_add(&rcc_wakeup_handler);
 	itr_enable(rcc_wakeup_handler.it);
+
+	itr_add(&sgi9_reset_handler);
+	itr_enable(sgi9_reset_handler.it);
 
 #ifdef CFG_STM32MP13
 	/* Disable STOP request */

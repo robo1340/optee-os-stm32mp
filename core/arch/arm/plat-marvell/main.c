@@ -75,13 +75,19 @@ register_phys_mem_pgdir(MEM_AREA_IO_SEC, GICC_BASE, CORE_MMU_PGDIR_SIZE);
 
 void main_init_gic(void)
 {
-	paddr_t gicd_base;
-	paddr_t gicc_base = 0;
+	vaddr_t gicd_base;
+	vaddr_t gicc_base = 0;
 
 #ifdef GICC_BASE
-	gicc_base = GIC_BASE + GICC_OFFSET;
+	gicc_base = (vaddr_t)phys_to_virt(GIC_BASE + GICC_OFFSET,
+					  MEM_AREA_IO_SEC, 1);
+	if (!gicc_base)
+		panic();
 #endif
-	gicd_base = GIC_BASE + GICD_OFFSET;
+	gicd_base = (vaddr_t)phys_to_virt(GIC_BASE + GICD_OFFSET,
+					  MEM_AREA_IO_SEC, 1);
+	if (!gicd_base)
+		panic();
 
 	gic_init_base_addr(&gic_data, gicc_base, gicd_base);
 

@@ -161,7 +161,6 @@
 #define I2C_NSEC_PER_SEC		1000000000UL
 #define I2C_TIMEOUT_BUSY_MS		25
 #define I2C_TIMEOUT_BUSY_US		(I2C_TIMEOUT_BUSY_MS * 1000)
-#define I2C_TIMEOUT_RXNE_MS		5
 
 #define CR2_RESET_MASK			(I2C_CR2_SADD | I2C_CR2_HEAD10R | \
 					 I2C_CR2_NBYTES | I2C_CR2_RELOAD | \
@@ -387,7 +386,7 @@ static int i2c_compute_timing(struct stm32_i2c_platform_data *init,
 {
 	const struct i2c_spec_s *specs = NULL;
 	uint32_t speed_freq = 0;
-	uint32_t i2cbus = 0;
+	uint32_t i2cbus = UDIV_ROUND_NEAREST(I2C_NSEC_PER_SEC, speed_freq);
 	uint32_t i2cclk = UDIV_ROUND_NEAREST(I2C_NSEC_PER_SEC, clock_src);
 	uint32_t p_prev = I2C_TIMINGR_PRESC_MAX;
 	uint32_t af_delay_min = 0;
@@ -1326,8 +1325,7 @@ static int i2c_read(struct i2c_handle_s *hi2c, struct i2c_request *request,
 	}
 
 	do {
-		if (wait_isr_event(hi2c, I2C_ISR_RXNE, 1,
-				   timeout_init_us(I2C_TIMEOUT_RXNE_MS * 1000)))
+		if (wait_isr_event(hi2c, I2C_ISR_RXNE, 1, timeout_ref))
 			goto bail;
 
 		*p_buff = io_read8(base + I2C_RXDR);
@@ -1362,10 +1360,6 @@ static int i2c_read(struct i2c_handle_s *hi2c, struct i2c_request *request,
 	 */
 	if (i2c_wait_stop(hi2c, timeout_ref))
 		goto bail;
-
-	/* Clear the NACK generated at the end of the transfer */
-	if ((io_read32(get_base(hi2c) + I2C_ISR) & I2C_ISR_NACKF))
-		io_write32(get_base(hi2c) + I2C_ICR, I2C_ICR_NACKCF);
 
 	io_write32(base + I2C_ICR, I2C_ISR_STOPF);
 

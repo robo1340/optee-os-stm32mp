@@ -48,7 +48,9 @@ CFG_TPM_LOG_BASE_ADDR ?= 0x402c951
 CFG_TPM_MAX_LOG_SIZE ?= 0x200
 endif
 
-ifneq ($(CFG_ARM64_core),y)
+ifeq ($(CFG_ARM64_core),y)
+$(call force,CFG_WITH_LPAE,y)
+else
 $(call force,CFG_ARM32_core,y)
 endif
 
@@ -81,8 +83,6 @@ CFG_SHMEM_SIZE   ?= 0x00200000
 $(call force,CFG_CORE_LARGE_PHYS_ADDR,y)
 $(call force,CFG_CORE_ARM64_PA_BITS,36)
 CFG_CRYPTO_WITH_CE ?= y
-CFG_ARM_SMCCC_TRNG ?= y
-CFG_WITH_SOFTWARE_PRNG ?= n
 endif
 
 ifeq ($(PLATFORM_FLAVOR),qemu_virt)
@@ -125,11 +125,4 @@ CFG_SHMEM_SIZE  ?= 0x00200000
 CFG_TEE_SDP_MEM_SIZE ?= 0x00400000
 $(call force,CFG_DT,y)
 CFG_DTB_MAX_SIZE ?= 0x100000
-endif
-
-ifneq (,$(filter $(PLATFORM_FLAVOR),qemu_virt qemu_armv8a))
-CFG_DT_DRIVER_EMBEDDED_TEST ?= y
-ifeq ($(CFG_DT_DRIVER_EMBEDDED_TEST),y)
-$(call force,CFG_EMBED_DTB_SOURCE_FILE,embedded_dtb_test.dts,Mandated for DT tests)
-endif
 endif

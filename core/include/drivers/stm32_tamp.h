@@ -1,12 +1,11 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /*
- * Copyright (c) 2021-2023, STMicroelectronics
+ * Copyright (c) 2021, STMicroelectronics
  */
 
-#ifndef __DRIVERS_STM32_TAMP_H__
-#define __DRIVERS_STM32_TAMP_H__
+#ifndef __STM32_TAMP_H__
+#define __STM32_TAMP_H__
 
-#include <compiler.h>
 #include <drivers/clk.h>
 #include <mm/core_memprot.h>
 #include <stddef.h>
@@ -52,29 +51,26 @@ enum stm32_tamp_id {
 #define TAMP_CB_ACK_AND_RESET	(TAMP_CB_RESET | TAMP_CB_ACK)
 
 /*
- * struct stm32_bkpregs_conf - Interface for stm32_tamp_set_secure_bkpregs()
- * @nb_zone1_regs - Number of backup registers in zone 1
- * @nb_zone2_regs - Number of backup registers in zone 2
+ * Define number of backup registers in zone 1 and zone 2 (remaining are in
+ * zone 3)
  *
- * TAMP backup registers access permissions
+ * backup registers in zone 1: read/write only in secure mode
+ *                     zone 2: write only in secure mode, read in secure
+ *                              and non-secure mode
+ *                     zone 3: read/write in secure and non-secure mode
  *
- * Zone 1: read/write in secure state, no access in non-secure state
- * Zone 2: read/write in secure state, read-only in non-secure state
- * Zone 3: read/write in secure state, read/write in non-secure state
- *
- * Protection zone 1
- * If nb_zone1_regs == 0 no backup register are in zone 1.
- * Otherwise backup registers from TAMP_BKP0R to TAMP_BKP<x>R are in zone 1,
- * with <x> = (@nb_zone1_regs - 1).
- *
- * Protection zone 2
- * If nb_zone2_regs == 0 no backup register are in zone 2.
- * Otherwise backup registers from TAMP_BKP<y>R ro TAMP_BKP<z>R are in zone 2,
- * with <y> = @nb_zone1_regs and <z> = (@nb_zone1_regs1 + @nb_zone2_regs - 1).
- *
- * Protection zone 3
- * Backup registers from TAMP_BKP<t>R to last backup register are in zone 3,
- * with <t> = (@nb_zone1_regs1 + @nb_zone2_regs).
+ * Protection zone 1 if nb_zone1_regs == 0 no backup register are in zone 1
+ *                   else backup registers from TAMP_BKP0R to TAMP_BKPxR
+ *                   with x = nb_zone1_regs - 1 are in zone 1.
+ * Protection zone 2 if nb_zone2_regs == 0 no backup register are in zone 2
+ *                   else backup registers from
+ *                   TAMP_BKPyR with y = nb_zone1_regs
+ *                   to
+ *                   TAMP_BKPzR with z = (nb_zone1_regs1 + nb_zone2_regs - 1)
+ *                   are in zone 2.
+ * Protection zone 3 backup registers from TAMP_BKPtR
+ *                   with t = nb_zone1_regs1 + nb_zone2_regs to last backup
+ *                   register are in zone 3.
  */
 struct stm32_bkpregs_conf {
 	uint32_t nb_zone1_regs;
@@ -144,8 +140,20 @@ TEE_Result stm32_tamp_set_mask(enum stm32_tamp_id id);
 TEE_Result stm32_tamp_unset_mask(enum stm32_tamp_id id);
 
 /*
- * stm32_tamp_set_secure_bkpregs: Configure backup registers zone.
- * @conf - Configuration to be programmed
+ * stm32_tamp_set_secure_bkprwregs: Configure backup registers zone.
+ * registers in zone 1: read/write only in secure mode
+ *              zone 2: write only in secure mode, read in secure and
+ *                       non-secure mode
+ *              zone 3: read/write in secure and non-secure mode
+ *
+ * bkpregs_conf: a pointer to struct bkpregs_conf that define the number of
+ * registers in zone 1 and zone 2 (remaining backup registers will be in
+ * zone 3).
+ *
+ * return TEE_ERROR_NOT_SUPPORTED:  if zone 1 and/or zone 2 definition are out
+ *                                  of range.
+ *        TEE_ERROR_BAD_PARAMETERS: if bkpregs_cond is NULL.
+ *        TEE_SUCCESS             : if OK.
  */
 TEE_Result stm32_tamp_set_secure_bkpregs(struct stm32_bkpregs_conf
 					 *bkpregs_conf);
@@ -163,7 +171,7 @@ TEE_Result stm32_tamp_set_secure_bkpregs(struct stm32_bkpregs_conf
 TEE_Result stm32_tamp_set_config(void);
 
 /* Compatibility tags */
-#define TAMP_HAS_REGISTER_SECCFGR	BIT(0)
+#define TAMP_HAS_REGISTER_SECCFG	BIT(0)
 #define TAMP_HAS_REGISTER_PRIVCFGR	BIT(1)
 #define TAMP_HAS_REGISTER_ERCFGR	BIT(2)
 #define TAMP_HAS_REGISTER_ATCR2		BIT(3)
@@ -196,4 +204,4 @@ struct stm32_tamp_platdata {
 
 TEE_Result stm32_tamp_get_platdata(struct stm32_tamp_platdata *pdata);
 
-#endif /* __DRIVERS_STM32_TAMP_H__ */
+#endif /* __STM32_TAMP_H__ */

@@ -1,29 +1,23 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
- * Copyright (c) 2021, STMicroelectronics - All Rights Reserved
+ * Copyright (c) 2021-2022, STMicroelectronics - All Rights Reserved
  */
 
 #ifndef STM32_CRYP_H
 #define STM32_CRYP_H
 
 #include <drivers/clk.h>
-#include <drivers/rstctrl.h>
+#include <drivers/clk_dt.h>
 #include <kernel/mutex.h>
 #include <mm/core_memprot.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-/*
- * Platform data related to CRYP instance
- * @base - IO memory base address
- * @clk - CRYP clock reference
- * @rstctrl - CRYP reset controller reference
- */
 struct stm32_cryp_platdata {
 	struct io_pa_va base;
 	struct clk *clock;
-	struct rstctrl *reset;
+	unsigned int reset_id;
 };
 
 enum stm32_cryp_algo_mode {

@@ -19,7 +19,7 @@
 #include <mm/core_memprot.h>
 #include <platform_config.h>
 
-#define TIMEOUT_US_10MS		(10U * 1000U)
+#define TIMEOUT_US_10MS		10U * 1000U
 
 #define PWR_CR3_VBE		BIT(8)
 #define PWR_CR3_VBRS		BIT(9)
@@ -65,6 +65,13 @@ vaddr_t stm32_pwr_base(void)
 	return io_pa_or_va_secure(&base, 1);
 }
 
+unsigned int stm32mp1_pwr_regulator_mv(enum pwr_regulator id)
+{
+	assert(id < PWR_REGU_COUNT);
+
+	return pwr_regulators[id].level_mv;
+}
+
 static TEE_Result pwr_set_state(const struct regul_desc *desc, bool enable)
 {
 	struct pwr_regu_desc *p = (struct pwr_regu_desc *)desc->driver_data;
@@ -72,12 +79,11 @@ static TEE_Result pwr_set_state(const struct regul_desc *desc, bool enable)
 	uint32_t enable_mask = p->cr3_enable_mask;
 
 	if (enable) {
-		uint64_t to = 0;
+		uint64_t to = timeout_init_us(TIMEOUT_US_10MS);
 		uint32_t ready_mask = p->cr3_ready_mask;
 
 		io_setbits32(pwr_cr3, enable_mask);
 
-		to = timeout_init_us(TIMEOUT_US_10MS);
 		while (!timeout_elapsed(to))
 			if (io_read32(pwr_cr3) & ready_mask)
 				break;
@@ -99,6 +105,14 @@ static TEE_Result pwr_get_state(const struct regul_desc *desc, bool *enabled)
 	*enabled = io_read32(pwr_cr3) & p->cr3_enable_mask;
 
 	return TEE_SUCCESS;
+}
+
+bool stm32mp1_pwr_regulator_is_enabled(enum pwr_regulator id)
+{
+	assert(id < PWR_REGU_COUNT);
+
+	return io_read32(stm32_pwr_base() + PWR_CR3_OFF) &
+	       pwr_regulators[id].cr3_enable_mask;
 }
 
 static TEE_Result pwr_get_voltage(const struct regul_desc *desc, uint16_t *mv)
@@ -157,6 +171,26 @@ static struct regul_desc stm32mp1_pwr_regs[] = {
 DECLARE_KEEP_PAGER(stm32mp1_pwr_regs);
 
 #ifdef CFG_EMBED_DTB
+static void enable_sd_io(uint32_t enable_mask, uint32_t ready_mask,
+			 uint32_t valid_mask)
+{
+	uintptr_t cr3 = stm32_pwr_base() + PWR_CR3_OFF;
+	uint64_t to = timeout_init_us(TIMEOUT_US_10MS);
+
+	io_setbits32(cr3, enable_mask);
+
+	while (!timeout_elapsed(to))
+		if (io_read32(cr3) & ready_mask)
+			break;
+
+	if (!(io_read32(cr3) & ready_mask))
+		DMSG("timeout during enable sd io for %#"PRIx32, enable_mask);
+
+	/* Disable voltage detector and keep the IOs powered */
+	io_setbits32(cr3, valid_mask);
+	io_clrbits32(cr3, enable_mask);
+}
+
 static TEE_Result stm32mp1_pwr_regu_probe(const void *fdt, int node,
 					  const void *compat_data __unused)
 {
@@ -177,10 +211,15 @@ static TEE_Result stm32mp1_pwr_regu_probe(const void *fdt, int node,
 					     reg_name, res);
 					panic();
 				}
-
-				break;
 			}
 		}
+	}
+
+	if (IS_ENABLED(CFG_STM32MP13)) {
+		enable_sd_io(PWR_CR3_VDDSD1EN, PWR_CR3_VDDSD1RDY,
+			     PWR_CR3_VDDSD1VALID);
+		enable_sd_io(PWR_CR3_VDDSD2EN, PWR_CR3_VDDSD2RDY,
+			     PWR_CR3_VDDSD2VALID);
 	}
 
 	if (fdt_getprop(fdt, node, "st,enable-vbat-charge", NULL)) {

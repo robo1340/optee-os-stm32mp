@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 /*
- * Copyright (c) 2015-2022, Linaro Limited
+ * Copyright (c) 2015-2021, Linaro Limited
  */
 
 #include <arm.h>
@@ -9,7 +9,6 @@
 #include <kernel/misc.h>
 #include <kernel/panic.h>
 #include <kernel/tee_ta_manager.h>
-#include <kernel/thread_private.h>
 #include <kernel/user_mode_ctx.h>
 #include <mm/core_mmu.h>
 #include <mm/mobj.h>
@@ -17,6 +16,8 @@
 #include <tee/tee_svc.h>
 #include <trace.h>
 #include <unw/unwind.h>
+
+#include "thread_private.h"
 
 enum fault_type {
 	FAULT_TYPE_USER_MODE_PANIC,
@@ -113,8 +114,6 @@ static __maybe_unused const char *fault_to_str(uint32_t abort_type,
 		return " (read permission fault)";
 	case CORE_MMU_FAULT_WRITE_PERMISSION:
 		return " (write permission fault)";
-	case CORE_MMU_FAULT_TAG_CHECK:
-		return " (tag check fault)";
 	default:
 		return "";
 	}
@@ -349,8 +348,7 @@ static void handle_user_mode_panic(struct abort_info *ai)
 #ifdef ARM64
 static void handle_user_mode_panic(struct abort_info *ai)
 {
-	struct thread_ctx *tc __maybe_unused = NULL;
-	uint32_t daif = 0;
+	uint32_t daif;
 
 	/*
 	 * It was a user exception, stop user execution and return
@@ -361,16 +359,6 @@ static void handle_user_mode_panic(struct abort_info *ai)
 	ai->regs->x2 = 0xdeadbeef;
 	ai->regs->elr = (vaddr_t)thread_unwind_user_mode;
 	ai->regs->sp_el0 = thread_get_saved_thread_sp();
-
-#if defined(CFG_CORE_PAUTH)
-	/*
-	 * We're going to return to the privileged core thread, update the
-	 * APIA key to match the key used by the thread.
-	 */
-	tc = threads + thread_get_id();
-	ai->regs->apiakey_hi = tc->keys.apia_hi;
-	ai->regs->apiakey_lo = tc->keys.apia_lo;
-#endif
 
 	daif = (ai->regs->spsr >> SPSR_32_AIF_SHIFT) & SPSR_32_AIF_MASK;
 	/* XXX what about DAIF_D? */
@@ -519,13 +507,6 @@ static enum fault_type get_fault_type(struct abort_info *ai)
 			abort_print(ai);
 		DMSG("[abort] Ignoring async external abort!");
 		return FAULT_TYPE_IGNORE;
-
-	case CORE_MMU_FAULT_TAG_CHECK:
-		if (abort_is_user_exception(ai))
-			return FAULT_TYPE_USER_MODE_PANIC;
-		abort_print_error(ai);
-		panic("[abort] Tag check fault! (trap CPU)");
-		break;
 
 	case CORE_MMU_FAULT_OTHER:
 	default:
